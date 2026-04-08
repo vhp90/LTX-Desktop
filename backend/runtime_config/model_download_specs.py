@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
-from state.app_state_types import ModelFileType
+from api_types import ModelFileType
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +107,8 @@ DEFAULT_REQUIRED_MODEL_TYPES: frozenset[ModelFileType] = frozenset(
     {"checkpoint", "upsampler", "zit"}
 )
 
+MODEL_SETUP_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "model_setup.yaml"
+
 
 def _normalized_relative_path(
     specs: Mapping[ModelFileType, ModelFileDownloadSpec],
@@ -173,3 +175,72 @@ def resolve_required_model_types(
     if has_api_key and not use_local_text_encoder:
         return base_required
     return cast(frozenset[ModelFileType], base_required | {"text_encoder"})
+
+
+def load_model_setup_config(
+    config_path: Path | None = None,
+    *,
+    base_specs: Mapping[ModelFileType, ModelFileDownloadSpec] | None = None,
+    base_required: frozenset[ModelFileType] | None = None,
+) -> tuple[dict[ModelFileType, ModelFileDownloadSpec], frozenset[ModelFileType]]:
+    """Load model specs from the desktop YAML config, falling back to defaults.
+
+    The YAML intentionally mirrors desktop runtime model types rather than the
+    older ComfyUI folder layout. Unsupported Comfy-only assets should not be
+    represented here.
+    """
+    import yaml
+
+    resolved_path = config_path or MODEL_SETUP_CONFIG_PATH
+    specs = dict(base_specs or DEFAULT_MODEL_DOWNLOAD_SPECS)
+    required_types = base_required or DEFAULT_REQUIRED_MODEL_TYPES
+
+    if not resolved_path.exists():
+        return specs, required_types
+
+    with resolved_path.open("r", encoding="utf-8") as handle:
+        loaded_payload: object = yaml.safe_load(handle) or {}
+    if not isinstance(loaded_payload, dict):
+        raise ValueError(f"Invalid YAML root in {resolved_path}")
+    payload = cast(dict[str, object], loaded_payload)
+
+    raw_models = payload.get("models", {})
+    if not isinstance(raw_models, dict):
+        raise ValueError(f"Invalid models section in {resolved_path}")
+    typed_raw_models = cast(dict[str, object], raw_models)
+
+    for raw_model_type, raw_spec in typed_raw_models.items():
+        model_type = cast(ModelFileType, raw_model_type)
+        if model_type not in DEFAULT_MODEL_DOWNLOAD_SPECS:
+            raise ValueError(f"Unknown model type in {resolved_path}: {raw_model_type}")
+        if not isinstance(raw_spec, dict):
+            raise ValueError(f"Invalid spec for {raw_model_type} in {resolved_path}")
+        typed_raw_spec = cast(dict[str, Any], raw_spec)
+
+        merged = {
+            "relative_path": str(DEFAULT_MODEL_DOWNLOAD_SPECS[model_type].relative_path),
+            "expected_size_bytes": DEFAULT_MODEL_DOWNLOAD_SPECS[model_type].expected_size_bytes,
+            "is_folder": DEFAULT_MODEL_DOWNLOAD_SPECS[model_type].is_folder,
+            "repo_id": DEFAULT_MODEL_DOWNLOAD_SPECS[model_type].repo_id,
+            "description": DEFAULT_MODEL_DOWNLOAD_SPECS[model_type].description,
+            **typed_raw_spec,
+        }
+        specs[model_type] = ModelFileDownloadSpec(
+            relative_path=Path(str(merged["relative_path"])),
+            expected_size_bytes=int(merged["expected_size_bytes"]),
+            is_folder=bool(merged["is_folder"]),
+            repo_id=str(merged["repo_id"]),
+            description=str(merged["description"]),
+        )
+
+    raw_required = payload.get("required_model_types")
+    if raw_required is not None:
+        if not isinstance(raw_required, list):
+            raise ValueError(f"required_model_types must be a list in {resolved_path}")
+        required_items = [cast(ModelFileType, item) for item in cast(list[object], raw_required)]
+        unknown_required = [item for item in required_items if item not in DEFAULT_MODEL_DOWNLOAD_SPECS]
+        if unknown_required:
+            raise ValueError(f"Unknown required model types in {resolved_path}: {unknown_required}")
+        required_types = cast(frozenset[ModelFileType], frozenset(required_items))
+
+    return specs, required_types

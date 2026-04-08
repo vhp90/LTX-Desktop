@@ -135,7 +135,7 @@ graph TD
   BE --> DATA
 ```
 
-## Development (quickstart)
+## Development
 
 Prereqs:
 
@@ -147,19 +147,79 @@ Prereqs:
 Setup:
 
 ```bash
-pnpm setup:dev
+corepack pnpm setup:dev
 ```
 
-Run:
+Model setup:
 
 ```bash
-pnpm dev
+corepack pnpm setup:models
 ```
+
+This downloads the desktop runtime models defined in [config/model_setup.yaml](/teamspace/studios/this_studio/LTX-Desktop/config/model_setup.yaml) into the app model layout. Add `-- --include-optional` to pull optional desktop assets such as the local text encoder and IC-LoRA bundle too.
+
+To also pull the preserved external LTX LoRAs and imported side-assets from the old workflow:
+
+```bash
+corepack pnpm setup:models -- --include-external-loras --include-external-assets
+```
+
+Protected CivitAI downloads require a token. In Lightning Studio, store it as a secret named `CIVITAI_TOKEN` or `CIVITAI_API_TOKEN`.
+
+### Run locally
+
+```bash
+corepack pnpm dev
+```
+
+### Lightning AI Studio
+
+For Lightning, `corepack pnpm dev` auto-switches into browser-preview mode and starts both the backend and Vite without Electron.
+
+Main command:
+
+```bash
+corepack pnpm dev
+```
+
+Default Lightning ports:
+
+- Frontend preview: `5173`
+- Backend: `18000`
+
+If you want to run the pieces manually instead:
+
+```bash
+# Terminal 1: backend
+cd backend
+LTX_APP_DATA_DIR=../.ltx-data \
+LTX_BACKEND_BIND_HOST=0.0.0.0 \
+LTX_PORT=18000 \
+LTX_ALLOWED_ORIGINS=https://your-studio-origin.example \
+uv run --python 3.13.7 python ltx2_server.py
+
+# Terminal 2: frontend preview
+VITE_LTX_BACKEND_URL=https://your-forwarded-backend-url \
+corepack pnpm dev:renderer
+```
+
+Useful environment variables:
+
+- `LTX_RENDERER_HOST`: Vite host for remote previews. Defaults to `0.0.0.0`.
+- `LTX_RENDERER_PORT`: Vite port. Defaults to `5173`.
+- `LTX_RENDERER_URL`: Explicit URL for Electron to load in dev mode.
+- `VITE_LTX_BACKEND_URL`: Backend URL for browser preview mode when Electron is not present.
+- `VITE_LTX_BACKEND_PORT`: Backend port override for Lightning/browser preview inference. Defaults to `18000`.
+- `VITE_LTX_BACKEND_TOKEN`: Optional auth token for browser preview mode.
+- `LTX_BACKEND_BIND_HOST`: FastAPI bind host. Use `0.0.0.0` for forwarded Studio ports.
+- `LTX_BACKEND_PUBLIC_HOST`: Host printed in the backend ready message. Defaults to `127.0.0.1`.
+- `LTX_ALLOWED_ORIGINS`: Comma-separated extra CORS origins for forwarded Studio URLs.
+- `LTX_ALLOWED_ORIGIN_REGEX`: Optional regex-based CORS allowlist for more dynamic preview URLs.
 
 Debug:
 
 ```bash
-pnpm dev:debug
+corepack pnpm dev:debug
 ```
 
 `dev:debug` starts Electron with inspector enabled and starts the Python backend with `debugpy`.
@@ -167,13 +227,13 @@ pnpm dev:debug
 Typecheck:
 
 ```bash
-pnpm typecheck
+corepack pnpm typecheck
 ```
 
 Backend tests:
 
 ```bash
-pnpm backend:test
+corepack pnpm backend:test
 ```
 
 Building installers:

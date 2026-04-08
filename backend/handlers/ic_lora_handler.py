@@ -28,6 +28,7 @@ from handlers.pipelines_handler import PipelinesHandler
 from handlers.text_handler import TextHandler
 from runtime_config.model_download_specs import resolve_model_path
 from runtime_config.runtime_config import RuntimeConfig
+from services.ltx_lora_manager import build_lora_signature, resolve_lora_entries
 from state.conditioning_cache import ConditioningCacheEntry, ConditioningCacheKey
 from services.interfaces import VideoProcessor
 from services.services_utils import FrameArray
@@ -131,6 +132,11 @@ class IcLoraHandler(StateHandlerBase):
         if not video_path.exists():
             raise HTTPError(400, f"Video not found: {req.video_path}")
         lora_path, depth_model_path = self._require_ic_lora_model_paths()
+        try:
+            extra_loras = resolve_lora_entries(req.loras)
+        except ValueError as exc:
+            raise HTTPError(400, str(exc)) from exc
+        extra_lora_signature = build_lora_signature(req.loras)
 
         generation_id = uuid.uuid4().hex[:8]
         t_total_start = time.perf_counter()
@@ -141,6 +147,8 @@ class IcLoraHandler(StateHandlerBase):
             ic_state = self._pipelines.load_ic_lora(
                 str(lora_path),
                 str(depth_model_path),
+                extra_loras=extra_loras,
+                extra_lora_signature=extra_lora_signature,
             )
             t_load_end = time.perf_counter()
             logger.info("[ic-lora] Pipeline load: %.2fs", t_load_end - t_load_start)

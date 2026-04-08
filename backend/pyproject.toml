@@ -4,6 +4,7 @@ version = "1.0.0"
 description = "LTX-2 Video Generation Backend"
 requires-python = ">=3.12"
 dependencies = [
+    "pyyaml>=6.0.2",
     "pillow>=10.3.0",
     "torch>=2.3.0",
     "huggingface-hub>=0.23.0",

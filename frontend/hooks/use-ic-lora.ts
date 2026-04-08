@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import type { LoraStackItem } from '../components/LoraStackPanel'
 import { ApiClient } from '../lib/api-client'
 import { logger } from '../lib/logger'
 
@@ -9,6 +10,7 @@ export interface IcLoraSubmitParams {
   conditioningType: IcLoraConditioningType
   conditioningStrength: number
   prompt: string
+  loras?: LoraStackItem[]
 }
 
 export interface IcLoraResult {
@@ -46,6 +48,11 @@ export function useIcLora() {
         conditioning_type: params.conditioningType,
         conditioning_strength: params.conditioningStrength,
         prompt: params.prompt,
+        loras: (params.loras || []).map((lora) => ({
+          path: lora.path,
+          strength: lora.strength,
+          sd_ops_preset: lora.sdOpsPreset,
+        })),
       } as unknown as Parameters<typeof ApiClient.generateIcLora>[0])
       if (payload.status === 'cancelled') {
         setState({

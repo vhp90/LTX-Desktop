@@ -545,6 +545,13 @@
             ],
             "title": "Imagepath"
           },
+          "loras": {
+            "items": {
+              "$ref": "#/components/schemas/LoraInput"
+            },
+            "title": "Loras",
+            "type": "array"
+          },
           "model": {
             "default": "fast",
             "enum": [
@@ -891,6 +898,13 @@
             "title": "Images",
             "type": "array"
           },
+          "loras": {
+            "items": {
+              "$ref": "#/components/schemas/LoraInput"
+            },
+            "title": "Loras",
+            "type": "array"
+          },
           "negative_prompt": {
             "default": "",
             "title": "Negative Prompt",
@@ -940,6 +954,64 @@
           "path"
         ],
         "title": "IcLoraImageInput",
+        "type": "object"
+      },
+      "LocalLoraFile": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "path"
+        ],
+        "title": "LocalLoraFile",
+        "type": "object"
+      },
+      "LocalLoraListResponse": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/LocalLoraFile"
+            },
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "LocalLoraListResponse",
+        "type": "object"
+      },
+      "LoraInput": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "sd_ops_preset": {
+            "const": "ltx_comfy",
+            "default": "ltx_comfy",
+            "title": "Sd Ops Preset",
+            "type": "string"
+          },
+          "strength": {
+            "default": 1.0,
+            "title": "Strength",
+            "type": "number"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "LoraInput",
         "type": "object"
       },
       "ModelDownloadRequest": {
@@ -1283,6 +1355,13 @@
           "duration": {
             "title": "Duration",
             "type": "number"
+          },
+          "loras": {
+            "items": {
+              "$ref": "#/components/schemas/LoraInput"
+            },
+            "title": "Loras",
+            "type": "array"
           },
           "mode": {
             "default": "replace_audio_and_video",
@@ -2017,6 +2096,27 @@
           }
         },
         "summary": "Route Download Progress",
+        "tags": [
+          "models"
+        ]
+      }
+    },
+    "/api/models/local-loras": {
+      "get": {
+        "operationId": "route_local_loras_api_models_local_loras_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalLoraListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Route Local Loras",
         "tags": [
           "models"
         ]

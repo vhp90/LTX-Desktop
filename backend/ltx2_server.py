@@ -28,6 +28,7 @@ import threading
 
 import torch
 
+from api_types import ModelFileType
 import services.patches.record_stream_fix as _record_stream_fix  # pyright: ignore[reportUnusedImport]  # Remove once ltx-core includes the fix
 del _record_stream_fix
 import services.patches.safetensors_loader_fix as _safetensors_loader_fix  # pyright: ignore[reportUnusedImport]  # Remove once safetensors/PyTorch fix the mmap issue
@@ -111,6 +112,26 @@ if use_sage_attention:
 # ============================================================
 
 PORT = 0
+PROJECT_ROOT = Path(__file__).parent.parent
+
+
+def _parse_allowed_origins() -> list[str]:
+    raw_value = os.environ.get("LTX_ALLOWED_ORIGINS", "")
+    configured = [origin.strip() for origin in raw_value.split(",") if origin.strip()]
+    return [*DEFAULT_ALLOWED_ORIGINS, *configured]
+
+
+def _get_allowed_origin_regex() -> str | None:
+    raw_value = os.environ.get("LTX_ALLOWED_ORIGIN_REGEX", "").strip()
+    return raw_value or None
+
+
+def _get_backend_bind_host() -> str:
+    return os.environ.get("LTX_BACKEND_BIND_HOST", "127.0.0.1")
+
+
+def _get_backend_public_host() -> str:
+    return os.environ.get("LTX_BACKEND_PUBLIC_HOST", "127.0.0.1")
 
 
 def _get_device() -> torch.device:
@@ -121,17 +142,46 @@ def _get_device() -> torch.device:
     return torch.device("cpu")
 
 
+def _env_flag(name: str) -> bool | None:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return None
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _default_use_torch_compile(device: torch.device) -> bool:
+    env_override = _env_flag("LTX_DEFAULT_TORCH_COMPILE")
+    if env_override is not None:
+        return env_override
+    return device.type == "cuda"
+
+
+def _default_load_on_startup(device: torch.device) -> bool:
+    env_override = _env_flag("LTX_DEFAULT_LOAD_ON_STARTUP")
+    if env_override is not None:
+        return env_override
+    return device.type == "cuda"
+
+
 DEVICE = _get_device()
 DTYPE = torch.bfloat16
 
 def _resolve_app_data_dir() -> Path:
     env_path = os.environ.get("LTX_APP_DATA_DIR")
-    if not env_path:
-        raise RuntimeError(
-            "LTX_APP_DATA_DIR environment variable must be set. "
-            "When running standalone, set it to the desired data directory."
+    if env_path:
+        candidate = Path(env_path)
+    else:
+        candidate = PROJECT_ROOT / ".ltx-data"
+        logger.warning(
+            "LTX_APP_DATA_DIR was not set; defaulting app data to %s. "
+            "Set LTX_APP_DATA_DIR explicitly to override this location.",
+            candidate,
         )
-    candidate = Path(env_path)
     candidate.mkdir(parents=True, exist_ok=True)
     return candidate
 
@@ -141,7 +191,6 @@ APP_DATA_DIR = _resolve_app_data_dir()
 DEFAULT_MODELS_DIR = APP_DATA_DIR / "models"
 DEFAULT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-PROJECT_ROOT = Path(__file__).parent.parent
 OUTPUTS_DIR = APP_DATA_DIR / "outputs"
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -155,17 +204,26 @@ SETTINGS_DIR = APP_DATA_DIR
 SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = SETTINGS_DIR / "settings.json"
 
-DEFAULT_APP_SETTINGS = AppSettings()
+DEFAULT_APP_SETTINGS = AppSettings(
+    use_torch_compile=_default_use_torch_compile(DEVICE),
+    load_on_startup=_default_load_on_startup(DEVICE),
+)
+logger.info(
+    "Default acceleration settings: use_torch_compile=%s load_on_startup=%s",
+    DEFAULT_APP_SETTINGS.use_torch_compile,
+    DEFAULT_APP_SETTINGS.load_on_startup,
+)
 
 from app_factory import DEFAULT_ALLOWED_ORIGINS, create_app
 from state import RuntimeConfig, build_initial_state
-from runtime_config.model_download_specs import DEFAULT_MODEL_DOWNLOAD_SPECS, DEFAULT_REQUIRED_MODEL_TYPES
+from runtime_config.model_download_specs import load_model_setup_config
 from runtime_config.runtime_policy import decide_force_api_generations
-from state.app_state_types import ModelFileType
 from server_utils.model_layout_migration import migrate_legacy_models_layout
 from services.gpu_info.gpu_info_impl import GpuInfoImpl
 
 migrate_legacy_models_layout(APP_DATA_DIR)
+
+MODEL_DOWNLOAD_SPECS, CONFIGURED_REQUIRED_MODEL_TYPES = load_model_setup_config()
 
 LTX_API_BASE_URL = "https://api.ltx.video"
 
@@ -193,8 +251,8 @@ def _resolve_force_api_generations() -> bool:
 
 
 FORCE_API_GENERATIONS = _resolve_force_api_generations()
-REQUIRED_MODEL_TYPES: frozenset[ModelFileType] = (
-    frozenset() if FORCE_API_GENERATIONS else DEFAULT_REQUIRED_MODEL_TYPES
+EFFECTIVE_REQUIRED_MODEL_TYPES: frozenset[ModelFileType] = (
+    frozenset() if FORCE_API_GENERATIONS else CONFIGURED_REQUIRED_MODEL_TYPES
 )
 
 CAMERA_MOTION_PROMPTS = {
@@ -214,8 +272,8 @@ DEFAULT_NEGATIVE_PROMPT = """blurry, out of focus, overexposed, underexposed, lo
 runtime_config = RuntimeConfig(
     device=DEVICE,
     default_models_dir=DEFAULT_MODELS_DIR,
-    model_download_specs=DEFAULT_MODEL_DOWNLOAD_SPECS,
-    required_model_types=REQUIRED_MODEL_TYPES,
+    model_download_specs=MODEL_DOWNLOAD_SPECS,
+    required_model_types=EFFECTIVE_REQUIRED_MODEL_TYPES,
     outputs_dir=OUTPUTS_DIR,
     settings_file=SETTINGS_FILE,
     ltx_api_base_url=LTX_API_BASE_URL,
@@ -231,7 +289,13 @@ handler = build_initial_state(runtime_config, DEFAULT_APP_SETTINGS)
 auth_token = os.environ.get("LTX_AUTH_TOKEN", "")
 admin_token = os.environ.get("LTX_ADMIN_TOKEN", "")
 
-app = create_app(handler=handler, allowed_origins=DEFAULT_ALLOWED_ORIGINS, auth_token=auth_token, admin_token=admin_token)
+app = create_app(
+    handler=handler,
+    allowed_origins=_parse_allowed_origins(),
+    allowed_origin_regex=_get_allowed_origin_regex(),
+    auth_token=auth_token,
+    admin_token=admin_token,
+)
 
 
 def precache_model_files(model_dir: Path) -> int:
@@ -273,9 +337,12 @@ if __name__ == "__main__":
     import uvicorn
 
     port = int(os.environ.get("LTX_PORT", "") or PORT)
+    bind_host = _get_backend_bind_host()
+    public_host = _get_backend_public_host()
     logger.info("=" * 60)
     logger.info("LTX-2 Video Generation Server (FastAPI + Uvicorn)")
     log_hardware_info()
+    logger.info("Backend bind host: %s  |  public host: %s  |  port request: %s", bind_host, public_host, port)
     logger.info("=" * 60)
 
     warmup_thread = threading.Thread(target=background_warmup, daemon=True)
@@ -304,10 +371,10 @@ if __name__ == "__main__":
     # Bind the socket ourselves so we know the actual port before uvicorn starts.
     sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
     sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
-    sock.bind(("127.0.0.1", port))
+    sock.bind((bind_host, port))
     actual_port = int(sock.getsockname()[1])
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=actual_port, log_level="info", access_log=False, log_config=log_config)
+    config = uvicorn.Config(app, host=bind_host, port=actual_port, log_level="info", access_log=False, log_config=log_config)
     server = uvicorn.Server(config)
 
     _orig_startup = server.startup
@@ -316,7 +383,7 @@ if __name__ == "__main__":
         await _orig_startup(sockets=sockets)
         if server.started:
             # Machine-parseable ready message — Electron matches this line
-            print(f"Server running on http://127.0.0.1:{actual_port}", flush=True)
+            print(f"Server running on http://{public_host}:{actual_port}", flush=True)
 
     server.startup = _startup_with_ready_msg  # type: ignore[assignment]
 

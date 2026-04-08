@@ -36,6 +36,10 @@ def _write_test_wav(path: Path, *, duration_seconds: float = 0.1, sample_rate: i
         wav_file.writeframes(b"\x00\x00" * frame_count)
 
 
+def _write_test_lora(path: Path) -> None:
+    path.write_bytes(b"fake-lora")
+
+
 def _enable_local_text_encoding(test_state) -> None:
     test_state.state.app_settings.use_local_text_encoder = True
 
@@ -143,6 +147,47 @@ class TestGenerate:
         pipeline = fake_services.fast_video_pipeline
         assert pipeline.generate_calls[0]["seed"] == 123
 
+    def test_t2v_loras_forwarded(self, client, test_state, fake_services, create_fake_model_files, tmp_path):
+        create_fake_model_files()
+        _enable_local_text_encoding(test_state)
+        lora_a = tmp_path / "camera-a.safetensors"
+        lora_b = tmp_path / "camera-b.safetensors"
+        _write_test_lora(lora_a)
+        _write_test_lora(lora_b)
+
+        r = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "loras": [
+                    {"path": str(lora_a), "strength": 0.75, "sd_ops_preset": "ltx_comfy"},
+                    {"path": str(lora_b), "strength": 1.1, "sd_ops_preset": "ltx_comfy"},
+                ],
+            },
+        )
+        assert r.status_code == 200
+
+        created_loras = fake_services.fast_video_pipeline.last_create_loras
+        assert len(created_loras) == 2
+        assert created_loras[0].path == str(lora_a)
+        assert created_loras[0].strength == 0.75
+        assert created_loras[1].path == str(lora_b)
+        assert created_loras[1].strength == 1.1
+
+    def test_t2v_rejects_missing_lora(self, client, test_state, create_fake_model_files):
+        create_fake_model_files()
+        _enable_local_text_encoding(test_state)
+
+        r = client.post(
+            "/api/generate",
+            json={
+                **_T2V_JSON,
+                "loras": [{"path": "/no/such/model.safetensors", "strength": 1.0, "sd_ops_preset": "ltx_comfy"}],
+            },
+        )
+        assert r.status_code == 400
+        assert "LoRA file not found" in r.json()["error"]
+
     def test_error_sets_generation_error(self, client, test_state, fake_services, create_fake_model_files):
         create_fake_model_files()
         _enable_local_text_encoding(test_state)
@@ -230,6 +275,33 @@ class TestA2VGenerate:
         )
         assert r.status_code == 400
         assert "Invalid audio file" in r.json()["error"]
+
+    def test_a2v_loras_forwarded(self, client, test_state, fake_services, create_fake_model_files, tmp_path):
+        create_fake_model_files()
+        _enable_local_text_encoding(test_state)
+        audio_file = tmp_path / "test_audio.wav"
+        lora_file = tmp_path / "motion.safetensors"
+        _write_test_wav(audio_file)
+        _write_test_lora(lora_file)
+
+        r = client.post(
+            "/api/generate",
+            json={
+                "prompt": "A music video",
+                "resolution": "540p",
+                "model": "pro",
+                "duration": 2,
+                "fps": 24,
+                "audioPath": str(audio_file),
+                "loras": [{"path": str(lora_file), "strength": 1.25, "sd_ops_preset": "ltx_comfy"}],
+            },
+        )
+
+        assert r.status_code == 200
+        created_loras = fake_services.a2v_pipeline.last_create_loras
+        assert len(created_loras) == 1
+        assert created_loras[0].path == str(lora_file)
+        assert created_loras[0].strength == 1.25
 
     def test_a2v_forced_api_routes_to_ltx_api(self, client, test_state, fake_services, tmp_path):
         test_state.config.force_api_generations = True

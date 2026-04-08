@@ -8,6 +8,7 @@ from api_types import ImageConditioningInput
 
 if TYPE_CHECKING:
     import torch
+    from ltx_core.loader import LoraPathStrengthAndSDOps
 
 
 class A2VPipeline(Protocol):
@@ -17,6 +18,8 @@ class A2VPipeline(Protocol):
         gemma_root: str | None,
         upsampler_path: str,
         device: torch.device,
+        *,
+        loras: list["LoraPathStrengthAndSDOps"] | None = None,
     ) -> "A2VPipeline": ...
 
     def generate(
@@ -35,3 +38,5 @@ class A2VPipeline(Protocol):
         audio_max_duration: float | None,
         output_path: str,
     ) -> None: ...
+
+    def compile_transformer(self) -> None: ...

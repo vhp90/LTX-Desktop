@@ -8,6 +8,7 @@ from api_types import ImageConditioningInput
 
 if TYPE_CHECKING:
     import torch
+    from ltx_core.loader import LoraPathStrengthAndSDOps
 
 
 class IcLoraPipeline(Protocol):
@@ -18,6 +19,8 @@ class IcLoraPipeline(Protocol):
         upsampler_path: str,
         lora_path: str,
         device: torch.device,
+        *,
+        extra_loras: list["LoraPathStrengthAndSDOps"] | None = None,
     ) -> "IcLoraPipeline":
         ...
 
@@ -34,3 +37,5 @@ class IcLoraPipeline(Protocol):
         output_path: str,
     ) -> None:
         ...
+
+    def compile_transformer(self) -> None: ...

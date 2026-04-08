@@ -1,0 +1,108 @@
+version: 1
+
+# Desktop-native model setup.
+# This file intentionally maps only assets the LTX Desktop runtime actually uses.
+# ComfyUI-only concepts from the old setup have been removed:
+# - separate video/audio VAEs
+# - text projection weights
+# - temporal latent upscaler
+#
+# Notes:
+# - `checkpoint` stays on the desktop-tested distilled checkpoint rather than the
+#   Comfy `22b-dev-fp8` transformer, because the current desktop pipelines are
+#   wired around the distilled local path.
+# - `upsampler` is updated to the x2 1.1 model from your prior config because it
+#   is the same desktop-used asset class.
+# - `text_encoder` stays on the Gemma snapshot format the desktop expects;
+#   the Comfy safetensors text encoder is not compatible with this runtime path.
+# - `external_loras` keeps the non-builtin LTX-targeted LoRA URLs from your old
+#   workflow so they can still be downloaded into the desktop workspace.
+
+required_model_types:
+  - checkpoint
+  - upsampler
+  - zit
+
+models:
+  checkpoint:
+    relative_path: ltx-2.3-22b-distilled.safetensors
+    expected_size_bytes: 43000000000
+    is_folder: false
+    repo_id: Lightricks/LTX-2.3
+    description: Main transformer model
+
+  upsampler:
+    relative_path: ltx-2.3-spatial-upscaler-x2-1.1.safetensors
+    expected_size_bytes: 1900000000
+    is_folder: false
+    repo_id: Lightricks/LTX-2.3
+    description: 2x spatial upscaler
+
+  distilled_lora:
+    relative_path: ltx-2-19b-distilled-lora-384.safetensors
+    expected_size_bytes: 400000000
+    is_folder: false
+    repo_id: Lightricks/LTX-2
+    description: Distilled LoRA for desktop pro/local compatibility paths
+
+  ic_lora:
+    relative_path: ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors
+    expected_size_bytes: 654465352
+    is_folder: false
+    repo_id: Lightricks/LTX-2.3-22b-IC-LoRA-Union-Control
+    description: Union IC-LoRA control model
+
+  depth_processor:
+    relative_path: dpt-hybrid-midas
+    expected_size_bytes: 500000000
+    is_folder: true
+    repo_id: Intel/dpt-hybrid-midas
+    description: DPT-Hybrid MiDaS depth processor
+
+  person_detector:
+    relative_path: yolox_l.torchscript.pt
+    expected_size_bytes: 217697649
+    is_folder: false
+    repo_id: hr16/yolox-onnx
+    description: YOLOX person detector for pose preprocessing
+
+  pose_processor:
+    relative_path: dw-ll_ucoco_384_bs5.torchscript.pt
+    expected_size_bytes: 135059124
+    is_folder: false
+    repo_id: hr16/DWPose-TorchScript-BatchSize5
+    description: DW Pose TorchScript processor
+
+  text_encoder:
+    relative_path: gemma-3-12b-it-qat-q4_0-unquantized
+    expected_size_bytes: 25000000000
+    is_folder: true
+    repo_id: Lightricks/gemma-3-12b-it-qat-q4_0-unquantized
+    description: Gemma text encoder snapshot used by the desktop runtime
+
+  zit:
+    relative_path: Z-Image-Turbo
+    expected_size_bytes: 31000000000
+    is_folder: true
+    repo_id: Tongyi-MAI/Z-Image-Turbo
+    description: Z-Image-Turbo model for text-to-image generation
+
+external_loras:
+  - url: https://civitai.com/api/download/models/2778591?type=Model&format=SafeTensor&size=full&fp=fp16
+  - url: https://civitai.com/api/download/models/2778606?type=Model&format=SafeTensor
+  - url: https://civitai.com/api/download/models/2770256?type=Model&format=SafeTensor
+  - url: https://civitai.com/api/download/models/2809352?type=Model&format=SafeTensor
+
+external_assets:
+  diffusion_models:
+    - url: https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-dev-fp8.safetensors
+  vae:
+    - url: https://huggingface.co/Kijai/LTX2.3_comfy/blob/main/vae/LTX23_video_vae_bf16.safetensors
+    - url: https://huggingface.co/Kijai/LTX2.3_comfy/blob/main/vae/LTX23_audio_vae_bf16.safetensors
+    - url: http://github.com/madebyollin/taehv/raw/refs/heads/main/safetensors/taeltx2_3.safetensors
+  text_encoders:
+    - url: https://huggingface.co/Sikaworld1990/gemma-3-12b-it-abliterated-sikaworld-high-fidelity-edition-Ltx-2/resolve/main/gemma-3-12b-it-abliterated-sikaworld-high-fidelity-edition.safetensors
+    - url: https://huggingface.co/Kijai/LTX2.3_comfy/blob/main/text_encoders/ltx-2.3_text_projection_bf16.safetensors
+  latent_upscale_models:
+    - url: https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors
+    - url: https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-temporal-upscaler-x2-1.0.safetensors

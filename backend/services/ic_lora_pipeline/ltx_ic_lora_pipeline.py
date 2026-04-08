@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import torch
 
 from api_types import ImageConditioningInput
 from services.ltx_pipeline_common import default_tiling_config, encode_video_output, video_chunks_number
 from services.services_utils import AudioOrNone, TilingConfigType, device_supports_fp8
+
+if TYPE_CHECKING:
+    from ltx_core.loader import LoraPathStrengthAndSDOps
 
 
 class LTXIcLoraPipeline:
@@ -20,6 +23,9 @@ class LTXIcLoraPipeline:
         upsampler_path: str,
         lora_path: str,
         device: torch.device,
+        *,
+        extra_loras: list["LoraPathStrengthAndSDOps"] | None = None,
+        torch_compile: bool = False,
     ) -> "LTXIcLoraPipeline":
         return LTXIcLoraPipeline(
             checkpoint_path=checkpoint_path,
@@ -27,6 +33,8 @@ class LTXIcLoraPipeline:
             upsampler_path=upsampler_path,
             lora_path=lora_path,
             device=device,
+            extra_loras=extra_loras or [],
+            torch_compile=torch_compile,
         )
 
     def __init__(
@@ -36,6 +44,9 @@ class LTXIcLoraPipeline:
         upsampler_path: str,
         lora_path: str,
         device: torch.device,
+        *,
+        extra_loras: list["LoraPathStrengthAndSDOps"],
+        torch_compile: bool = False,
     ) -> None:
         from ltx_core.loader.primitives import LoraPathStrengthAndSDOps
         from ltx_core.loader.sd_ops import LTXV_LORA_COMFY_RENAMING_MAP
@@ -43,13 +54,23 @@ class LTXIcLoraPipeline:
         from ltx_pipelines.ic_lora import ICLoraPipeline
 
         lora_entry = LoraPathStrengthAndSDOps(path=lora_path, strength=1.0, sd_ops=LTXV_LORA_COMFY_RENAMING_MAP)
+        self._checkpoint_path = checkpoint_path
+        self._gemma_root = gemma_root
+        self._upsampler_path = upsampler_path
+        self._lora_path = lora_path
+        self._device = device
+        self._extra_loras = extra_loras
+        self._quantization = QuantizationPolicy.fp8_cast() if device_supports_fp8(device) else None
+        self._torch_compile = torch_compile
+        all_loras = [lora_entry, *extra_loras]
         self.pipeline = ICLoraPipeline(
             distilled_checkpoint_path=checkpoint_path,
             spatial_upsampler_path=upsampler_path,
             gemma_root=cast(str, gemma_root),
-            loras=[lora_entry],
+            loras=all_loras,
             device=device,
-            quantization=QuantizationPolicy.fp8_cast() if device_supports_fp8(device) else None,
+            quantization=self._quantization,
+            torch_compile=torch_compile,
         )
 
     def _run_inference(
@@ -106,3 +127,15 @@ class LTXIcLoraPipeline:
         )
         chunks = video_chunks_number(num_frames, tiling_config)
         encode_video_output(video=video, audio=audio, fps=int(frame_rate), output_path=output_path, video_chunks_number_value=chunks)
+
+    def compile_transformer(self) -> None:
+        compiled = LTXIcLoraPipeline(
+            checkpoint_path=self._checkpoint_path,
+            gemma_root=self._gemma_root,
+            upsampler_path=self._upsampler_path,
+            lora_path=self._lora_path,
+            device=self._device,
+            extra_loras=self._extra_loras,
+            torch_compile=True,
+        )
+        self.pipeline = compiled.pipeline

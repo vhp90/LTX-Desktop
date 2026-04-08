@@ -30,7 +30,7 @@ export interface AppSettings {
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
-  useTorchCompile: false,
+  useTorchCompile: true,
   loadOnStartup: true,
   hasLtxApiKey: false,
   userPrefersLtxApiVideoGenerations: false,

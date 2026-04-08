@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 DEFAULT_ALLOWED_ORIGINS: list[str] = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
 ]
 
 
@@ -39,6 +41,7 @@ def create_app(
     *,
     handler: "AppHandler",
     allowed_origins: list[str] | None = None,
+    allowed_origin_regex: str | None = None,
     title: str = "LTX-2 Video Generation Server",
     auth_token: str = "",
     admin_token: str = "",
@@ -51,6 +54,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins or DEFAULT_ALLOWED_ORIGINS,
+        allow_origin_regex=allowed_origin_regex,
         allow_methods=["*"],
         allow_headers=["*"],
     )

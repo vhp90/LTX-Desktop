@@ -1,3 +1,5 @@
+import type { LoraStackItem } from '../components/LoraStackPanel'
+
 // Project and Asset types for LTX Desktop
 
 // Parameters needed to regenerate a shot
@@ -21,6 +23,7 @@ export interface GenerationParams {
   icLoraVideoPath?: string
   icLoraConditioningType?: string
   icLoraConditioningStrength?: number
+  loras?: LoraStackItem[]
 }
 
 // A single "take" (version) of a generated asset

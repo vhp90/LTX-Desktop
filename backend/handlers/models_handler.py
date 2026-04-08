@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING
 
-from api_types import ModelFileStatus, ModelInfo, ModelsStatusResponse, TextEncoderStatus
+from api_types import LocalLoraFile, LocalLoraListResponse, ModelFileStatus, ModelInfo, ModelsStatusResponse, TextEncoderStatus
 from handlers.base import StateHandlerBase, with_state_lock
 from runtime_config.model_download_specs import MODEL_FILE_ORDER, resolve_model_path, resolve_required_model_types
 from state.app_state_types import AppState, AvailableFiles, ModelFileType
@@ -149,3 +149,18 @@ class ModelsHandler(StateHandlerBase):
             text_encoder_status=self.get_text_encoder_status(),
             use_local_text_encoder=settings.use_local_text_encoder,
         )
+
+    def get_local_loras(self) -> LocalLoraListResponse:
+        lora_root = self.models_dir.parent / "loras" / "external"
+        if not lora_root.exists():
+            return LocalLoraListResponse(files=[])
+
+        files = sorted(
+            (
+                LocalLoraFile(name=path.name, path=str(path.resolve()))
+                for path in lora_root.glob("*.safetensors")
+                if path.is_file()
+            ),
+            key=lambda item: item.name.lower(),
+        )
+        return LocalLoraListResponse(files=files)

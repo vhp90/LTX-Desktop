@@ -11,6 +11,7 @@ from api_types import (
     ModelDownloadRequest,
     ModelDownloadStartResponse,
     ModelInfo,
+    LocalLoraListResponse,
     ModelsStatusResponse,
     RequiredModelsResponse,
     TextEncoderAlreadyDownloadedResponse,
@@ -34,6 +35,11 @@ def route_models_list(handler: AppHandler = Depends(get_state_service)) -> list[
 @router.get("/models/status", response_model=ModelsStatusResponse)
 def route_models_status(handler: AppHandler = Depends(get_state_service)) -> ModelsStatusResponse:
     return handler.models.get_models_status()
+
+
+@router.get("/models/local-loras", response_model=LocalLoraListResponse)
+def route_local_loras(handler: AppHandler = Depends(get_state_service)) -> LocalLoraListResponse:
+    return handler.models.get_local_loras()
 
 
 @router.get("/models/download/progress", response_model=DownloadProgressResponse)

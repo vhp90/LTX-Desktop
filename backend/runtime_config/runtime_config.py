@@ -8,8 +8,8 @@ from pathlib import Path
 
 import torch
 
+from api_types import ModelFileType
 from runtime_config.model_download_specs import ModelFileDownloadSpec
-from state.app_state_types import ModelFileType
 
 
 @dataclass

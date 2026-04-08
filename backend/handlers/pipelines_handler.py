@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 from threading import RLock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from handlers.base import StateHandlerBase
 from handlers.text_handler import TextHandler
 from runtime_config.model_download_specs import resolve_model_path
+from services.ltx_lora_manager import LoraSignature
 from services.interfaces import (
     A2VPipeline,
     DepthProcessorPipeline,
@@ -35,9 +36,19 @@ from state.app_state_types import (
 )
 
 if TYPE_CHECKING:
+    from ltx_core.loader import LoraPathStrengthAndSDOps
     from runtime_config.runtime_config import RuntimeConfig
 
 logger = logging.getLogger(__name__)
+
+CompilablePipelineState = VideoPipelineState | ICLoraState | A2VPipelineState | RetakePipelineState
+CompilablePipelineStateT = TypeVar(
+    "CompilablePipelineStateT",
+    VideoPipelineState,
+    ICLoraState,
+    A2VPipelineState,
+    RetakePipelineState,
+)
 
 
 class PipelinesHandler(StateHandlerBase):
@@ -77,8 +88,8 @@ class PipelinesHandler(StateHandlerBase):
 
     def _pipeline_matches_model_type(self, model_type: VideoPipelineModelType) -> bool:
         match self.state.gpu_slot:
-            case GpuSlot(active_pipeline=VideoPipelineState(pipeline=pipeline)):
-                return pipeline.pipeline_kind == model_type
+            case GpuSlot(active_pipeline=VideoPipelineState(pipeline=pipeline, lora_signature=lora_signature)):
+                return pipeline.pipeline_kind == model_type and lora_signature == ()
             case _:
                 return False
 
@@ -98,23 +109,34 @@ class PipelinesHandler(StateHandlerBase):
             return
         te.service.install_patches(lambda: self.state)
 
-    def _compile_if_enabled(self, state: VideoPipelineState) -> VideoPipelineState:
+    def _compile_if_enabled(self, state: CompilablePipelineStateT) -> CompilablePipelineStateT:
         if not self.state.app_settings.use_torch_compile:
             return state
         if state.is_compiled:
             return state
         if self._runtime_device == "mps":
-            logger.info("Skipping torch.compile() for %s - not supported on MPS", state.pipeline.pipeline_kind)
+            pipeline_kind = getattr(state.pipeline, "pipeline_kind", type(state.pipeline).__name__)
+            logger.info("Skipping torch.compile() for %s - not supported on MPS", pipeline_kind)
             return state
 
         try:
-            state.pipeline.compile_transformer()
-            state.is_compiled = True
+            compile_transformer = getattr(state.pipeline, "compile_transformer", None)
+            if callable(compile_transformer):
+                compile_transformer()
+                state.is_compiled = True
+            else:
+                logger.info("Skipping torch.compile() for %s - pipeline does not expose compile_transformer()", type(state.pipeline).__name__)
+                return state
         except Exception as exc:
             logger.warning("Failed to compile transformer: %s", exc, exc_info=True)
         return state
 
-    def _create_video_pipeline(self, model_type: VideoPipelineModelType) -> VideoPipelineState:
+    def _create_video_pipeline(
+        self,
+        model_type: VideoPipelineModelType,
+        loras: list["LoraPathStrengthAndSDOps"] | None = None,
+        lora_signature: LoraSignature = (),
+    ) -> VideoPipelineState:
         gemma_root = self._text_handler.resolve_gemma_root()
 
         checkpoint_path = str(resolve_model_path(self.models_dir, self.config.model_download_specs,"checkpoint"))
@@ -125,12 +147,14 @@ class PipelinesHandler(StateHandlerBase):
             gemma_root,
             upsampler_path,
             self.config.device,
+            loras=loras or [],
         )
 
         state = VideoPipelineState(
             pipeline=pipeline,
             warmth=VideoPipelineWarmth.COLD,
             is_compiled=False,
+            lora_signature=lora_signature,
         )
         return self._compile_if_enabled(state)
 
@@ -244,12 +268,24 @@ class PipelinesHandler(StateHandlerBase):
         elif should_cleanup:
             self._gpu_cleaner.cleanup()
 
-    def load_gpu_pipeline(self, model_type: VideoPipelineModelType, should_warm: bool = False) -> VideoPipelineState:
+    def load_gpu_pipeline(
+        self,
+        model_type: VideoPipelineModelType,
+        should_warm: bool = False,
+        *,
+        loras: list["LoraPathStrengthAndSDOps"] | None = None,
+        lora_signature: LoraSignature = (),
+    ) -> VideoPipelineState:
         self._install_text_patches_if_needed()
 
         state: VideoPipelineState | None = None
         with self._lock:
-            if self._pipeline_matches_model_type(model_type):
+            if (
+                isinstance(self.state.gpu_slot, GpuSlot)
+                and isinstance(self.state.gpu_slot.active_pipeline, VideoPipelineState)
+                and self.state.gpu_slot.active_pipeline.pipeline.pipeline_kind == model_type
+                and self.state.gpu_slot.active_pipeline.lora_signature == lora_signature
+            ):
                 match self.state.gpu_slot:
                     case GpuSlot(active_pipeline=VideoPipelineState() as existing_state):
                         state = existing_state
@@ -258,7 +294,7 @@ class PipelinesHandler(StateHandlerBase):
 
         if state is None:
             self._evict_gpu_pipeline_for_swap()
-            state = self._create_video_pipeline(model_type)
+            state = self._create_video_pipeline(model_type, loras=loras, lora_signature=lora_signature)
             with self._lock:
                 self.state.gpu_slot = GpuSlot(active_pipeline=state)
                 self._assert_invariants()
@@ -278,6 +314,9 @@ class PipelinesHandler(StateHandlerBase):
         self,
         lora_path: str,
         depth_model_path: str,
+        *,
+        extra_loras: list["LoraPathStrengthAndSDOps"] | None = None,
+        extra_lora_signature: LoraSignature = (),
     ) -> ICLoraState:
         self._install_text_patches_if_needed()
 
@@ -287,10 +326,12 @@ class PipelinesHandler(StateHandlerBase):
                     active_pipeline=ICLoraState(
                         lora_path=current_lora_path,
                         depth_model_path=current_depth_model_path,
+                        extra_lora_signature=current_extra_lora_signature,
                     ) as state
                 ) if (
                     current_lora_path == lora_path
                     and current_depth_model_path == depth_model_path
+                    and current_extra_lora_signature == extra_lora_signature
                 ):
                     return state
                 case _:
@@ -304,6 +345,7 @@ class PipelinesHandler(StateHandlerBase):
             str(resolve_model_path(self.models_dir, self.config.model_download_specs,"upsampler")),
             lora_path,
             self.config.device,
+            extra_loras=extra_loras or [],
         )
         depth_pipeline = self._depth_processor_pipeline_class.create(depth_model_path, self.config.device)
         state = ICLoraState(
@@ -311,19 +353,27 @@ class PipelinesHandler(StateHandlerBase):
             lora_path=lora_path,
             depth_pipeline=depth_pipeline,
             depth_model_path=depth_model_path,
+            extra_lora_signature=extra_lora_signature,
+            is_compiled=False,
         )
+        state = self._compile_if_enabled(state)
 
         with self._lock:
             self.state.gpu_slot = GpuSlot(active_pipeline=state)
             self._assert_invariants()
         return state
 
-    def load_a2v_pipeline(self) -> A2VPipelineState:
+    def load_a2v_pipeline(
+        self,
+        *,
+        loras: list["LoraPathStrengthAndSDOps"] | None = None,
+        lora_signature: LoraSignature = (),
+    ) -> A2VPipelineState:
         self._install_text_patches_if_needed()
 
         with self._lock:
             match self.state.gpu_slot:
-                case GpuSlot(active_pipeline=A2VPipelineState() as state):
+                case GpuSlot(active_pipeline=A2VPipelineState(lora_signature=current_signature) as state) if current_signature == lora_signature:
                     return state
                 case _:
                     pass
@@ -335,15 +385,23 @@ class PipelinesHandler(StateHandlerBase):
             self._text_handler.resolve_gemma_root(),
             str(resolve_model_path(self.models_dir, self.config.model_download_specs,"upsampler")),
             self.config.device,
+            loras=loras or [],
         )
-        state = A2VPipelineState(pipeline=pipeline)
+        state = A2VPipelineState(pipeline=pipeline, lora_signature=lora_signature, is_compiled=False)
+        state = self._compile_if_enabled(state)
 
         with self._lock:
             self.state.gpu_slot = GpuSlot(active_pipeline=state)
             self._assert_invariants()
         return state
 
-    def load_retake_pipeline(self, *, distilled: bool = True) -> RetakePipelineState:
+    def load_retake_pipeline(
+        self,
+        *,
+        distilled: bool = True,
+        loras: list["LoraPathStrengthAndSDOps"] | None = None,
+        lora_signature: LoraSignature = (),
+    ) -> RetakePipelineState:
         self._install_text_patches_if_needed()
 
         quantized = device_supports_fp8(self.config.device)
@@ -351,8 +409,8 @@ class PipelinesHandler(StateHandlerBase):
         with self._lock:
             match self.state.gpu_slot:
                 case GpuSlot(
-                    active_pipeline=RetakePipelineState(distilled=current_distilled, quantized=current_quantized) as state
-                ) if current_distilled == distilled and current_quantized == quantized:
+                    active_pipeline=RetakePipelineState(distilled=current_distilled, quantized=current_quantized, lora_signature=current_signature) as state
+                ) if current_distilled == distilled and current_quantized == quantized and current_signature == lora_signature:
                     return state
                 case _:
                     pass
@@ -366,10 +424,17 @@ class PipelinesHandler(StateHandlerBase):
             checkpoint_path=str(resolve_model_path(self.models_dir, self.config.model_download_specs,"checkpoint")),
             gemma_root=self._text_handler.resolve_gemma_root(),
             device=self.config.device,
-            loras=[],
+            loras=loras or [],
             quantization=quantization,
         )
-        state = RetakePipelineState(pipeline=pipeline, distilled=distilled, quantized=quantized)
+        state = RetakePipelineState(
+            pipeline=pipeline,
+            distilled=distilled,
+            quantized=quantized,
+            lora_signature=lora_signature,
+            is_compiled=False,
+        )
+        state = self._compile_if_enabled(state)
 
         with self._lock:
             self.state.gpu_slot = GpuSlot(active_pipeline=state)

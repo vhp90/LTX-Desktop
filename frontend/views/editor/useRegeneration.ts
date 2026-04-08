@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react'
 import type { Asset } from '../../types/project'
+import type { LoraStackItem } from '../../components/LoraStackPanel'
 import type { GenerationSettings } from '../../components/SettingsPanel'
 import { addVisualAssetToProject } from '../../lib/asset-copy'
 import { ApiClient } from '../../lib/api-client'
@@ -78,7 +79,13 @@ function resolveAssetPreviewPath(assets: Asset[], clips: TimelineClip[], asset: 
 export interface UseRegenerationParams {
   projectId: string
   // Generation hook values
-  regenGenerate: (prompt: string, imagePath: string | null, settings: GenerationSettings) => Promise<void>
+  regenGenerate: (
+    prompt: string,
+    imagePath: string | null,
+    settings: GenerationSettings,
+    audioPath?: string | null,
+    loras?: LoraStackItem[],
+  ) => Promise<void>
   regenGenerateImage: (prompt: string, settings: GenerationSettings) => Promise<void>
   regenVideoPath: string | null
   regenImagePath: string | null
@@ -230,7 +237,7 @@ export function useRegeneration(params: UseRegenerationParams) {
     const videoSettings = shouldVideoGenerateWithLtxApi
       ? sanitizeForcedApiVideoSettings(rawVideoSettings)
       : rawVideoSettings
-    void regenGenerate(generationParams.prompt, imagePath, videoSettings)
+    void regenGenerate(generationParams.prompt, imagePath, videoSettings, undefined, generationParams.loras || [])
   }, [
     isRegenerating,
     projectId,

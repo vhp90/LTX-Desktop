@@ -186,6 +186,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/models/local-loras": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Route Local Loras */
+        get: operations["route_local_loras_api_models_local_loras_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/models/required-models": {
         parameters: {
             query?: never;
@@ -544,6 +561,8 @@ export interface components {
             fps: number;
             /** Imagepath */
             imagePath?: string | null;
+            /** Loras */
+            loras?: components["schemas"]["LoraInput"][];
             /**
              * Model
              * @default fast
@@ -698,6 +717,8 @@ export interface components {
             conditioning_type: "canny" | "depth";
             /** Images */
             images?: components["schemas"]["IcLoraImageInput"][];
+            /** Loras */
+            loras?: components["schemas"]["LoraInput"][];
             /**
              * Negative Prompt
              * @default
@@ -722,6 +743,34 @@ export interface components {
             frame: number;
             /** Path */
             path: string;
+            /**
+             * Strength
+             * @default 1
+             */
+            strength: number;
+        };
+        /** LocalLoraFile */
+        LocalLoraFile: {
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+        };
+        /** LocalLoraListResponse */
+        LocalLoraListResponse: {
+            /** Files */
+            files: components["schemas"]["LocalLoraFile"][];
+        };
+        /** LoraInput */
+        LoraInput: {
+            /** Path */
+            path: string;
+            /**
+             * Sd Ops Preset
+             * @default ltx_comfy
+             * @constant
+             */
+            sd_ops_preset: "ltx_comfy";
             /**
              * Strength
              * @default 1
@@ -866,6 +915,8 @@ export interface components {
         RetakeRequest: {
             /** Duration */
             duration: number;
+            /** Loras */
+            loras?: components["schemas"]["LoraInput"][];
             /**
              * Mode
              * @default replace_audio_and_video
@@ -1340,6 +1391,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    route_local_loras_api_models_local_loras_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalLoraListResponse"];
                 };
             };
         };

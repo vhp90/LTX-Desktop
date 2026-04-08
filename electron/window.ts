@@ -6,6 +6,15 @@ import { logger } from './logger'
 
 let mainWindow: BrowserWindow | null = null
 
+function getRendererDevUrl(): string {
+  if (process.env.LTX_RENDERER_URL) {
+    return process.env.LTX_RENDERER_URL
+  }
+
+  const port = process.env.LTX_RENDERER_PORT || '5173'
+  return `http://127.0.0.1:${port}`
+}
+
 export function createWindow(): BrowserWindow {
   // Get the path to preload script
   const preloadPath = isDev
@@ -37,7 +46,7 @@ export function createWindow(): BrowserWindow {
 
   // Load the app
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173')
+    mainWindow.loadURL(getRendererDevUrl())
     // DevTools can be opened manually with Ctrl+Shift+I or F12
   } else {
     mainWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'))

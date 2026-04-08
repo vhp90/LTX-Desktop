@@ -68,6 +68,14 @@ coverage/
 models/*
 !models/README.md
 backend/models/
+.ltx-data/
+
+# Local app/runtime state
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/.mypy_cache/
+backend/.coverage
+backend/.python-version
 
 # Profiling scripts and results
 backend/scripts/

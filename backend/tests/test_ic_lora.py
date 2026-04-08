@@ -255,3 +255,35 @@ class TestIcLoraGenerate:
 
         # Cache hit: no new control video should have been written
         assert len(test_state.video_processor.writers) == writers_after_first
+
+    def test_effect_loras_forwarded(self, client, test_state, fake_services, tmp_path):
+        video_path = test_state.config.outputs_dir / "input.mp4"
+        video_path.write_bytes(b"\x00" * 100)
+        _create_ic_lora_resources(test_state)
+
+        te_dir = _model_path(test_state, "text_encoder")
+        te_dir.mkdir(parents=True, exist_ok=True)
+        (te_dir / "model.safetensors").write_bytes(b"\x00" * 100)
+        test_state.state.app_settings.use_local_text_encoder = True
+
+        capture = FakeCapture(frames=["f1", "f2"], fps=24, width=64, height=64)
+        test_state.video_processor.register_video(str(video_path), capture)
+
+        lora_path = tmp_path / "style.safetensors"
+        lora_path.write_bytes(b"fake-lora")
+
+        response = client.post(
+            "/api/ic-lora/generate",
+            json={
+                "video_path": str(video_path),
+                "prompt": "test prompt",
+                "conditioning_type": "canny",
+                "loras": [{"path": str(lora_path), "strength": 1.15, "sd_ops_preset": "ltx_comfy"}],
+            },
+        )
+
+        assert response.status_code == 200
+        created_loras = fake_services.ic_lora_pipeline.last_create_extra_loras
+        assert len(created_loras) == 1
+        assert created_loras[0].path == str(lora_path)
+        assert created_loras[0].strength == 1.15

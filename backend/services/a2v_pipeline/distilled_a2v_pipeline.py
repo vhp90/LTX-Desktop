@@ -31,9 +31,10 @@ class DistilledA2VPipeline:
         distilled_checkpoint_path: str,
         gemma_root: str,
         spatial_upsampler_path: str,
-        loras: LoraPathStrengthAndSDOps | None = None,
+        loras: list[LoraPathStrengthAndSDOps] | None = None,
         device: torch.device | None = None,
         quantization: Any | None = None,
+        torch_compile: bool = False,
     ) -> None:
         from ltx_pipelines.utils.blocks import (
             AudioConditioner,
@@ -64,8 +65,9 @@ class DistilledA2VPipeline:
             distilled_checkpoint_path,
             self.dtype,
             device,
-            loras=tuple(loras) if loras else (),  # type: ignore[arg-type]
+            loras=tuple(loras) if loras else (),
             quantization=quantization,
+            torch_compile=torch_compile,
         )
         self.upsampler = VideoUpsampler(
             distilled_checkpoint_path, spatial_upsampler_path, self.dtype, device,

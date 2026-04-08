@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 # Availability and download are orthogonal concerns.
 AvailableFiles = dict[ModelFileType, Path | None]
+LoraStackSignature = tuple[tuple[str, float, str], ...]
 
 
 # ============================================================
@@ -120,6 +121,7 @@ class VideoPipelineState:
     pipeline: FastVideoPipeline
     warmth: VideoPipelineWarmth
     is_compiled: bool
+    lora_signature: LoraStackSignature = ()
 
 
 @dataclass
@@ -135,13 +137,17 @@ class ICLoraState:
     lora_path: str
     depth_pipeline: DepthProcessorPipeline
     depth_model_path: str
+    extra_lora_signature: LoraStackSignature = ()
     pose_resources: PoseResources | None = None
     conditioning_cache: ConditioningCache = field(default_factory=ConditioningCache)
+    is_compiled: bool = False
 
 
 @dataclass
 class A2VPipelineState:
     pipeline: A2VPipeline
+    lora_signature: LoraStackSignature = ()
+    is_compiled: bool = False
 
 
 @dataclass
@@ -149,6 +155,8 @@ class RetakePipelineState:
     pipeline: RetakePipeline
     distilled: bool
     quantized: bool
+    lora_signature: LoraStackSignature = ()
+    is_compiled: bool = False
 
 
 # ============================================================

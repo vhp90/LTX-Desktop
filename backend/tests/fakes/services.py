@@ -490,11 +490,14 @@ class FakeFastVideoPipeline(_FakeVideoPipelineBase):
         gemma_root: str | None,
         upsampler_path: str,
         device: str | object,
+        *,
+        loras: list[object] | None = None,
     ) -> "FakeFastVideoPipeline":
         del checkpoint_path, gemma_root, upsampler_path, device
         pipeline = FakeFastVideoPipeline._singleton
         if pipeline is None:
             raise RuntimeError("FakeFastVideoPipeline singleton is not bound")
+        pipeline.last_create_loras = list(loras or [])
         return pipeline
 
     def generate(
@@ -520,6 +523,8 @@ class FakeFastVideoPipeline(_FakeVideoPipelineBase):
                 "output_path": output_path,
             }
         )
+
+    last_create_loras: list[object] = []
 
 
 class FakeZitOutput:
@@ -576,11 +581,14 @@ class FakeIcLoraPipeline:
         upsampler_path: str,
         lora_path: str,
         device: str | object,
+        *,
+        extra_loras: list[object] | None = None,
     ) -> "FakeIcLoraPipeline":
         del checkpoint_path, gemma_root, upsampler_path, lora_path, device
         pipeline = FakeIcLoraPipeline._singleton
         if pipeline is None:
             raise RuntimeError("FakeIcLoraPipeline singleton is not bound")
+        pipeline.last_create_extra_loras = list(extra_loras or [])
         return pipeline
 
     def __init__(self) -> None:
@@ -595,6 +603,11 @@ class FakeIcLoraPipeline:
         output_path = Path(kwargs["output_path"])
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"fake-ic-lora-video")
+
+    def compile_transformer(self) -> None:
+        return None
+
+    last_create_extra_loras: list[object] = []
 
 
 class FakeDepthProcessorPipeline:
@@ -663,11 +676,14 @@ class FakeA2VPipeline:
         gemma_root: str | None,
         upsampler_path: str,
         device: str | object,
+        *,
+        loras: list[object] | None = None,
     ) -> "FakeA2VPipeline":
         del checkpoint_path, gemma_root, upsampler_path, device
         pipeline = FakeA2VPipeline._singleton
         if pipeline is None:
             raise RuntimeError("FakeA2VPipeline singleton is not bound")
+        pipeline.last_create_loras = list(loras or [])
         return pipeline
 
     def __init__(self) -> None:
@@ -682,6 +698,11 @@ class FakeA2VPipeline:
         output_path = Path(kwargs["output_path"])
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"fake-a2v-video")
+
+    def compile_transformer(self) -> None:
+        return None
+
+    last_create_loras: list[object] = []
 
 
 class FakeRetakePipeline:
@@ -700,10 +721,11 @@ class FakeRetakePipeline:
         loras: list[object] | None = None,
         quantization: object | None = None,
     ) -> "FakeRetakePipeline":
-        del checkpoint_path, gemma_root, device, loras, quantization
+        del checkpoint_path, gemma_root, device, quantization
         pipeline = FakeRetakePipeline._singleton
         if pipeline is None:
             raise RuntimeError("FakeRetakePipeline singleton is not bound")
+        pipeline.last_create_loras = list(loras or [])
         return pipeline
 
     def __init__(self) -> None:
@@ -718,6 +740,11 @@ class FakeRetakePipeline:
         output_path = Path(kwargs["output_path"])
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"fake-retake-video")
+
+    def compile_transformer(self) -> None:
+        return None
+
+    last_create_loras: list[object] = []
 
 
 class FakeTextEncoder:

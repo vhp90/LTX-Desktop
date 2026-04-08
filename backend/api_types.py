@@ -109,6 +109,15 @@ class ModelFileStatus(BaseModel):
     optional_reason: str | None = None
 
 
+class LocalLoraFile(BaseModel):
+    name: str
+    path: str
+
+
+class LocalLoraListResponse(BaseModel):
+    files: list[LocalLoraFile]
+
+
 class TextEncoderStatus(BaseModel):
     downloaded: bool
     size_bytes: int
@@ -269,6 +278,19 @@ class ErrorResponse(BaseModel):
 
 VideoResolution: TypeAlias = Literal["540p", "720p", "1080p", "1440p", "2160p"]
 VideoModel: TypeAlias = Literal["fast", "pro"]
+LoraSdOpsPreset: TypeAlias = Literal["ltx_comfy"]
+
+
+class LoraInput(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    path: str
+    strength: float = 1.0
+    sd_ops_preset: LoraSdOpsPreset = "ltx_comfy"
+
+
+def _default_loras() -> list[LoraInput]:
+    return []
 
 
 class GenerateVideoRequest(BaseModel):
@@ -285,6 +307,7 @@ class GenerateVideoRequest(BaseModel):
     imagePath: str | None = None
     audioPath: str | None = None
     aspectRatio: Literal["16:9", "9:16"] = "16:9"
+    loras: list[LoraInput] = Field(default_factory=_default_loras)
 
     @model_validator(mode="after")
     def _validate_a2v_model(self) -> "GenerateVideoRequest":
@@ -347,6 +370,7 @@ class RetakeRequest(BaseModel):
     duration: float
     prompt: str = ""
     mode: RetakeMode = "replace_audio_and_video"
+    loras: list[LoraInput] = Field(default_factory=_default_loras)
 
 
 ConditioningType: TypeAlias = Literal["canny", "depth"]
@@ -382,3 +406,4 @@ class IcLoraGenerateRequest(BaseModel):
     cfg_guidance_scale: float = 1.0
     negative_prompt: str = ""
     images: list[IcLoraImageInput] = Field(default_factory=_default_ic_lora_images)
+    loras: list[LoraInput] = Field(default_factory=_default_loras)

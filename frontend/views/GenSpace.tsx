@@ -26,6 +26,7 @@ import { logger } from '../lib/logger'
 import { RetakePanel } from '../components/RetakePanel'
 import { ICLoraPanel, CONDITIONING_TYPES } from '../components/ICLoraPanel'
 import { FreeApiKeyBubble } from '../components/FreeApiKeyBubble'
+import { LoraStackPanel, type LoraStackItem } from '../components/LoraStackPanel'
 
 // Asset card with hover overlays
 function AssetCard({
@@ -965,6 +966,7 @@ export function GenSpace() {
   const [icLoraPanelKey, setIcLoraPanelKey] = useState(0)
   const [icLoraCondType, setIcLoraCondType] = useState<ICLoraConditioningType>('canny')
   const [icLoraStrength, setIcLoraStrength] = useState(1.0)
+  const [loras, setLoras] = useState<LoraStackItem[]>([])
   const [icLoraInitial, setIcLoraInitial] = useState<{
     videoPath: string | null
   }>({ videoPath: null })
@@ -1105,6 +1107,7 @@ export function GenSpace() {
             imageSteps: 4,
             inputImageUrl: inputImage || undefined,
             inputAudioUrl: inputAudio || undefined,
+            loras: [...loras],
           },
           takes: [{
             path: copied.path,
@@ -1187,6 +1190,7 @@ export function GenSpace() {
             retakeStartTime: usedInput.startTime,
             retakeDuration: usedInput.duration,
             retakeMode: 'replace_audio_and_video',
+            loras: [...loras],
           },
           takes: [{
             path: copied.path,
@@ -1264,6 +1268,7 @@ export function GenSpace() {
             icLoraVideoPath: submission.input.videoPath,
             icLoraConditioningType: submission.input.conditioningType,
             icLoraConditioningStrength: submission.input.conditioningStrength,
+            loras: [...loras],
           },
           takes: [{
             path: copied.path,
@@ -1315,6 +1320,7 @@ export function GenSpace() {
                 cameraMotion: 'none',
                 imageAspectRatio: settings.aspectRatio,
                 imageSteps: 4,
+                loras: [...loras],
               },
               takes: [{
                 path: copied.path,
@@ -1348,6 +1354,7 @@ export function GenSpace() {
         conditioningType: icLoraCondType,
         conditioningStrength: icLoraStrength,
         prompt,
+        loras,
       })
       return
     }
@@ -1369,6 +1376,7 @@ export function GenSpace() {
         duration: retakeInput.duration,
         prompt,
         mode: 'replace_audio_and_video',
+        loras,
       })
       return
     }
@@ -1417,6 +1425,7 @@ export function GenSpace() {
           imageSteps: 4,
         },
         audioPath,
+        loras,
       )
     }
   }
@@ -1684,6 +1693,9 @@ export function GenSpace() {
 
       {/* Floating prompt panel — wider, responsive, centered */}
       <div className="absolute bottom-5 left-1/2 w-[min(700px,calc(100%-2rem))] -translate-x-1/2">
+        {(mode === 'video' || mode === 'retake' || mode === 'ic-lora') && !shouldVideoGenerateWithLtxApi && (
+          <LoraStackPanel loras={loras} onChange={setLoras} disabled={promptGenerating} />
+        )}
 
         <FreeApiKeyBubble
           forceApiGenerations={forceApiGenerations}

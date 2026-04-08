@@ -348,13 +348,14 @@ export function registerFileHandlers(): void {
     return results
   })
 
-  handle('showOpenFileDialog', async ({ title, filters, properties }) => {
+  handle('showOpenFileDialog', async ({ title, defaultPath, filters, properties }) => {
     const mainWindow = getMainWindow()
     if (!mainWindow) return null
     const props: any[] = ['openFile']
     if (properties?.includes('multiSelections')) props.push('multiSelections')
     const result = await dialog.showOpenDialog(mainWindow, {
       title: title || 'Select File',
+      defaultPath,
       filters: filters || [],
       properties: props,
     })

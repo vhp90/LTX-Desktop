@@ -93,6 +93,11 @@ class TestRetake:
         writer.close()
         return str(video_file)
 
+    def _make_lora(self, tmp_path, name: str = "retake.safetensors") -> str:
+        path = tmp_path / name
+        path.write_bytes(b"fake-lora")
+        return str(path)
+
     def _force_api(self, test_state) -> None:
         test_state.config.force_api_generations = True
 
@@ -234,6 +239,27 @@ class TestRetake:
         retake_call = fake_services.retake_pipeline.generate_calls[-1]
         assert retake_call["regenerate_video"] is True
         assert retake_call["regenerate_audio"] is False
+
+    def test_local_retake_loras_forwarded(self, client, test_state, create_fake_model_files, fake_services, tmp_path):
+        create_fake_model_files(include_zit=False)
+        test_state.state.app_settings.use_local_text_encoder = True
+        test_state.config.force_api_generations = False
+
+        video_path = self._make_valid_video(test_state)
+        lora_path = self._make_lora(tmp_path)
+        r = client.post(
+            "/api/retake",
+            json={
+                **self._base_payload(video_path),
+                "loras": [{"path": lora_path, "strength": 0.9, "sd_ops_preset": "ltx_comfy"}],
+            },
+        )
+
+        assert r.status_code == 200
+        created_loras = fake_services.retake_pipeline.last_create_loras
+        assert len(created_loras) == 1
+        assert created_loras[0].path == lora_path
+        assert created_loras[0].strength == 0.9
 
     def test_prefers_api_video_routes_retake_to_api(self, client, test_state, fake_services):
         test_state.config.force_api_generations = False

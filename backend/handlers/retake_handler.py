@@ -9,6 +9,7 @@ from threading import RLock
 import time
 
 from api_types import (
+    LoraInput,
     RetakeCancelledResponse,
     RetakeMode,
     RetakePayloadResponse,
@@ -24,9 +25,9 @@ from handlers.text_handler import TextHandler
 from runtime_config.runtime_config import RuntimeConfig
 from services.ltx_api_client.ltx_api_client import LTXAPIClientError
 from services.interfaces import LTXAPIClient
+from services.ltx_lora_manager import build_lora_signature, resolve_lora_entries
 from state.app_state_types import AppState
 from state.app_settings import should_video_generate_with_ltx_api
-
 
 class RetakeHandler(StateHandlerBase):
     def __init__(
@@ -65,6 +66,8 @@ class RetakeHandler(StateHandlerBase):
             force_api_generations=self.config.force_api_generations,
             settings=self.state.app_settings,
         ):
+            if req.loras:
+                raise HTTPError(400, "Local LoRA stacks are only supported for local generation mode")
             return self._run_api_retake(
                 video_file=video_file,
                 start_time=start_time,
@@ -79,6 +82,7 @@ class RetakeHandler(StateHandlerBase):
             duration=duration,
             prompt=prompt,
             mode=mode,
+            loras=req.loras,
         )
 
     def _run_api_retake(
@@ -125,6 +129,7 @@ class RetakeHandler(StateHandlerBase):
         duration: float,
         prompt: str,
         mode: RetakeMode,
+        loras: list[LoraInput],
     ) -> RetakeResponse:
         if self._generation.is_generation_running():
             raise HTTPError(409, "Generation already in progress")
@@ -146,7 +151,17 @@ class RetakeHandler(StateHandlerBase):
         regenerate_video, regenerate_audio = self._resolve_retake_mode(mode)
 
         try:
-            pipeline_state = self._pipelines.load_retake_pipeline(distilled=True)
+            lora_entries = resolve_lora_entries(loras)
+            lora_signature = build_lora_signature(loras)
+        except ValueError as exc:
+            raise HTTPError(400, str(exc)) from exc
+
+        try:
+            pipeline_state = self._pipelines.load_retake_pipeline(
+                distilled=True,
+                loras=lora_entries,
+                lora_signature=lora_signature,
+            )
             self._generation.start_generation(generation_id)
             self._generation.update_progress("loading_model", 5, 0, 1)
             self._generation.update_progress("inference", 15, 0, 1)

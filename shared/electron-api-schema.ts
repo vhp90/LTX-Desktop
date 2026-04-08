@@ -214,6 +214,7 @@ export const electronAPISchemas = {
   showOpenFileDialog: {
     input: z.object({
       title: z.string().optional(),
+      defaultPath: z.string().optional(),
       filters: z.array(fileFilter).optional(),
       properties: z.array(z.string()).optional(),
     }),

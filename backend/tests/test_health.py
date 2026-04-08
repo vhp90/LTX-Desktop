@@ -1,6 +1,8 @@
 """Tests for /health and /api/gpu-info endpoints."""
 
+from app_factory import create_app
 from state.app_state_types import GpuSlot, VideoPipelineState, VideoPipelineWarmth
+from starlette.testclient import TestClient
 from tests.fakes.services import FakeFastVideoPipeline
 
 
@@ -41,6 +43,17 @@ class TestHealth:
     def test_cors_header(self, client):
         r = client.get("/health", headers={"Origin": "http://localhost:5173"})
         assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+    def test_cors_header_from_extra_allowed_origins(self, test_state):
+        app = create_app(
+            handler=test_state,
+            allowed_origins=["https://studio.example.com"],
+        )
+
+        with TestClient(app) as client:
+            r = client.get("/health", headers={"Origin": "https://studio.example.com"})
+
+        assert r.headers.get("access-control-allow-origin") == "https://studio.example.com"
 
 
 class TestGpuInfo:

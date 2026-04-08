@@ -8,6 +8,7 @@ from api_types import ImageConditioningInput
 
 if TYPE_CHECKING:
     import torch
+    from ltx_core.loader import LoraPathStrengthAndSDOps
 
 
 class FastVideoPipeline(Protocol):
@@ -19,6 +20,8 @@ class FastVideoPipeline(Protocol):
         gemma_root: str | None,
         upsampler_path: str,
         device: torch.device,
+        *,
+        loras: list["LoraPathStrengthAndSDOps"] | None = None,
     ) -> "FastVideoPipeline":
         ...
 

@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
+import type { LoraStackItem } from '../components/LoraStackPanel'
 import type { GenerationSettings } from '../components/SettingsPanel'
 import { ApiClient } from '../lib/api-client'
 import { useAppSettings } from '../contexts/AppSettingsContext'
@@ -17,7 +18,7 @@ type GenerateVideoRequest = Parameters<typeof ApiClient.generateVideo>[0]
 type GenerateImageRequest = Parameters<typeof ApiClient.generateImage>[0]
 
 interface UseGenerationReturn extends GenerationState {
-  generate: (prompt: string, imagePath: string | null, settings: GenerationSettings, audioPath?: string | null) => Promise<void>
+  generate: (prompt: string, imagePath: string | null, settings: GenerationSettings, audioPath?: string | null, loras?: LoraStackItem[]) => Promise<void>
   generateImage: (prompt: string, settings: GenerationSettings) => Promise<void>
   cancel: () => void
   reset: () => void
@@ -100,6 +101,7 @@ export function useGeneration(): UseGenerationReturn {
     imagePath: string | null,
     settings: GenerationSettings,
     audioPath?: string | null,
+    loras: LoraStackItem[] = [],
   ) => {
     const statusMsg = settings.model === 'pro'
       ? 'Loading Pro model & generating...'
@@ -137,6 +139,13 @@ export function useGeneration(): UseGenerationReturn {
       }
       if (audioPath) {
         body.audioPath = audioPath
+      }
+      if (loras.length > 0) {
+        body.loras = loras.map((lora) => ({
+          path: lora.path,
+          strength: lora.strength,
+          sd_ops_preset: lora.sdOpsPreset,
+        }))
       }
 
       // Poll for real progress from backend with time-based interpolation

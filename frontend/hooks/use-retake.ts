@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import type { LoraStackItem } from '../components/LoraStackPanel'
 import { ApiClient } from '../lib/api-client'
 import { logger } from '../lib/logger'
 
@@ -10,6 +11,7 @@ export interface RetakeSubmitParams {
   duration: number
   prompt: string
   mode: RetakeMode
+  loras?: LoraStackItem[]
 }
 
 export interface RetakeResult {
@@ -48,7 +50,12 @@ export function useRetake() {
         duration: params.duration,
         prompt: params.prompt,
         mode: params.mode,
-      })
+        loras: (params.loras || []).map((lora) => ({
+          path: lora.path,
+          strength: lora.strength,
+          sd_ops_preset: lora.sdOpsPreset,
+        })),
+      } as unknown as Parameters<typeof ApiClient.retake>[0])
 
       if (payload.status === 'cancelled') {
         setState({

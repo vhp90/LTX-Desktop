@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import os
-from typing import Final, cast
+from typing import TYPE_CHECKING, Final, cast
 
 import torch
 
 from api_types import ImageConditioningInput
 from services.ltx_pipeline_common import default_tiling_config, encode_video_output, video_chunks_number
 from services.services_utils import AudioOrNone, TilingConfigType, device_supports_fp8
+
+if TYPE_CHECKING:
+    from ltx_core.loader import LoraPathStrengthAndSDOps
 
 
 class LTXFastVideoPipeline:
@@ -22,15 +25,26 @@ class LTXFastVideoPipeline:
         gemma_root: str | None,
         upsampler_path: str,
         device: torch.device,
+        *,
+        loras: list["LoraPathStrengthAndSDOps"] | None = None,
     ) -> "LTXFastVideoPipeline":
         return LTXFastVideoPipeline(
             checkpoint_path=checkpoint_path,
             gemma_root=gemma_root,
             upsampler_path=upsampler_path,
             device=device,
+            loras=loras or [],
         )
 
-    def __init__(self, checkpoint_path: str, gemma_root: str | None, upsampler_path: str, device: torch.device) -> None:
+    def __init__(
+        self,
+        checkpoint_path: str,
+        gemma_root: str | None,
+        upsampler_path: str,
+        device: torch.device,
+        *,
+        loras: list["LoraPathStrengthAndSDOps"],
+    ) -> None:
         from ltx_core.quantization import QuantizationPolicy
         from ltx_pipelines.distilled import DistilledPipeline
 
@@ -38,13 +52,14 @@ class LTXFastVideoPipeline:
         self._gemma_root = gemma_root
         self._upsampler_path = upsampler_path
         self._device = device
+        self._loras = loras
         self._quantization = QuantizationPolicy.fp8_cast() if device_supports_fp8(device) else None
 
         self.pipeline = DistilledPipeline(
             distilled_checkpoint_path=checkpoint_path,
             gemma_root=cast(str, gemma_root),
             spatial_upsampler_path=upsampler_path,
-            loras=[],
+            loras=loras,
             device=device,
             quantization=self._quantization,
         )
@@ -129,7 +144,7 @@ class LTXFastVideoPipeline:
             distilled_checkpoint_path=self._checkpoint_path,
             gemma_root=cast(str, self._gemma_root),
             spatial_upsampler_path=self._upsampler_path,
-            loras=[],
+            loras=self._loras,
             device=self._device,
             quantization=self._quantization,
             torch_compile=True,

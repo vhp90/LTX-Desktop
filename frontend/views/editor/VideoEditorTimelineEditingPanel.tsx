@@ -17,6 +17,7 @@ import {
 import { Button } from '../../components/ui/button'
 import { Tooltip } from '../../components/ui/tooltip'
 import { ClipWaveform } from '../../components/AudioWaveform'
+import type { LoraStackItem } from '../../components/LoraStackPanel'
 import type { GenerationSettings } from '../../components/SettingsPanel'
 import { addVisualAssetToProject } from '../../lib/asset-copy'
 import { GapGenerationModal } from './GapGenerationModal'
@@ -84,7 +85,13 @@ type GapAnchor = { x: number; gapTop: number; gapBottom: number } | null
 type GapGenerateMode = 'text-to-video' | 'image-to-video' | 'text-to-image'
 
 interface GapGenerationApi {
-  generate: (prompt: string, imagePath: string | null, settings: GenerationSettings) => Promise<void>
+  generate: (
+    prompt: string,
+    imagePath: string | null,
+    settings: GenerationSettings,
+    audioPath?: string | null,
+    loras?: LoraStackItem[],
+  ) => Promise<void>
   generateImage: (prompt: string, settings: GenerationSettings) => Promise<void>
   videoPath: string | null
   imagePath: string | null

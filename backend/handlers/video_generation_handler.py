@@ -28,6 +28,7 @@ from handlers.generation_handler import GenerationHandler
 from handlers.pipelines_handler import PipelinesHandler
 from handlers.text_handler import TextHandler
 from runtime_config.model_download_specs import resolve_model_path
+from services.ltx_lora_manager import build_lora_signature, resolve_lora_entries
 from server_utils.media_validation import (
     normalize_optional_path,
     validate_audio_file,
@@ -38,6 +39,7 @@ from state.app_state_types import AppState
 from state.app_settings import should_video_generate_with_ltx_api
 
 if TYPE_CHECKING:
+    from ltx_core.loader import LoraPathStrengthAndSDOps
     from runtime_config.runtime_config import RuntimeConfig
 
 logger = logging.getLogger(__name__)
@@ -80,10 +82,18 @@ class VideoGenerationHandler(StateHandlerBase):
         self._ltx_api_client = ltx_api_client
 
     def generate(self, req: GenerateVideoRequest) -> GenerateVideoResponse:
+        try:
+            lora_entries = resolve_lora_entries(req.loras)
+        except ValueError as exc:
+            raise HTTPError(400, str(exc)) from exc
+        lora_signature = build_lora_signature(req.loras)
+
         if should_video_generate_with_ltx_api(
             force_api_generations=self.config.force_api_generations,
             settings=self.state.app_settings,
         ):
+            if req.loras:
+                raise HTTPError(400, "Local LoRA stacks are only supported for local generation mode")
             return self._generate_forced_api(req)
 
         if self._generation.is_generation_running():
@@ -136,7 +146,12 @@ class VideoGenerationHandler(StateHandlerBase):
         seed = self._resolve_seed()
 
         try:
-            self._pipelines.load_gpu_pipeline("fast", should_warm=False)
+            self._pipelines.load_gpu_pipeline(
+                "fast",
+                should_warm=False,
+                loras=lora_entries,
+                lora_signature=lora_signature,
+            )
             self._generation.start_generation(generation_id)
 
             output_path = self.generate_video(
@@ -149,6 +164,8 @@ class VideoGenerationHandler(StateHandlerBase):
                 seed=seed,
                 camera_motion=req.cameraMotion,
                 negative_prompt=req.negativePrompt,
+                loras=lora_entries,
+                lora_signature=lora_signature,
             )
 
             self._generation.complete_generation(output_path)
@@ -173,6 +190,8 @@ class VideoGenerationHandler(StateHandlerBase):
         seed: int,
         camera_motion: VideoCameraMotion,
         negative_prompt: str,
+        loras: list["LoraPathStrengthAndSDOps"],
+        lora_signature: tuple[tuple[str, float, str], ...],
     ) -> str:
         t_total_start = time.perf_counter()
         gen_mode = "i2v" if image is not None else "t2v"
@@ -188,7 +207,12 @@ class VideoGenerationHandler(StateHandlerBase):
 
         self._generation.update_progress("loading_model", 5, 0, total_steps)
         t_load_start = time.perf_counter()
-        pipeline_state = self._pipelines.load_gpu_pipeline("fast", should_warm=False)
+        pipeline_state = self._pipelines.load_gpu_pipeline(
+            "fast",
+            should_warm=False,
+            loras=loras,
+            lora_signature=lora_signature,
+        )
         t_load_end = time.perf_counter()
         logger.info("[%s] Pipeline load: %.2fs", gen_mode, t_load_end - t_load_start)
 
@@ -258,6 +282,11 @@ class VideoGenerationHandler(StateHandlerBase):
     def _generate_a2v(
         self, req: GenerateVideoRequest, duration: int, fps: int, *, audio_path: str
     ) -> GenerateVideoResponse:
+        try:
+            lora_entries = resolve_lora_entries(req.loras)
+        except ValueError as exc:
+            raise HTTPError(400, str(exc)) from exc
+        lora_signature = build_lora_signature(req.loras)
         validated_audio_path = validate_audio_file(audio_path)
         audio_path_str = str(validated_audio_path)
 
@@ -284,7 +313,7 @@ class VideoGenerationHandler(StateHandlerBase):
         generation_id = self._make_generation_id()
 
         try:
-            a2v_state = self._pipelines.load_a2v_pipeline()
+            a2v_state = self._pipelines.load_a2v_pipeline(loras=lora_entries, lora_signature=lora_signature)
             self._generation.start_generation(generation_id)
 
             enhanced_prompt = req.prompt + self.config.camera_motion_prompts.get(req.cameraMotion, "")

@@ -37,6 +37,7 @@ class LTXRetakePipeline:
         *,
         loras: list[LoraPathStrengthAndSDOps] | None = None,
         quantization: QuantizationPolicy | None = None,
+        torch_compile: bool = False,
     ) -> RetakePipeline:
         return LTXRetakePipeline(
             checkpoint_path=checkpoint_path,
@@ -44,6 +45,7 @@ class LTXRetakePipeline:
             device=device,
             loras=loras or [],
             quantization=quantization,
+            torch_compile=torch_compile,
         )
 
     def __init__(
@@ -54,6 +56,7 @@ class LTXRetakePipeline:
         *,
         loras: list[LoraPathStrengthAndSDOps],
         quantization: QuantizationPolicy | None,
+        torch_compile: bool = False,
     ) -> None:
         from ltx_pipelines.utils.blocks import (
             AudioConditioner,
@@ -66,6 +69,11 @@ class LTXRetakePipeline:
 
         self.device = device
         self.dtype = torch.bfloat16
+        self._checkpoint_path = checkpoint_path
+        self._gemma_root = gemma_root
+        self._loras = loras
+        self._quantization = quantization
+        self._torch_compile = torch_compile
 
         self.prompt_encoder = PromptEncoder(
             checkpoint_path=checkpoint_path,
@@ -89,6 +97,7 @@ class LTXRetakePipeline:
             device=device,
             loras=tuple(loras),
             quantization=quantization,
+            torch_compile=torch_compile,
         )
         self.video_decoder = VideoDecoder(
             checkpoint_path=checkpoint_path,
@@ -100,6 +109,22 @@ class LTXRetakePipeline:
             dtype=self.dtype,
             device=device,
         )
+
+    def compile_transformer(self) -> None:
+        compiled = LTXRetakePipeline(
+            checkpoint_path=self._checkpoint_path,
+            gemma_root=self._gemma_root,
+            device=self.device,
+            loras=self._loras,
+            quantization=self._quantization,
+            torch_compile=True,
+        )
+        self.prompt_encoder = compiled.prompt_encoder
+        self.image_conditioner = compiled.image_conditioner
+        self.audio_conditioner = compiled.audio_conditioner
+        self.stage = compiled.stage
+        self.video_decoder = compiled.video_decoder
+        self.audio_decoder = compiled.audio_decoder
 
     @torch.no_grad()
     def _run(  # noqa: PLR0913, PLR0915
