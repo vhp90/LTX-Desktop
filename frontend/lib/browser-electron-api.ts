@@ -1,16 +1,22 @@
 import type { ElectronAPI } from '../../shared/electron-api-schema'
 
 function getBrowserBackendUrl(): string {
+  // Check for explicit backend URL first (for custom deployments)
   const url = import.meta.env.VITE_LTX_BACKEND_URL?.trim()
   if (url) return url
 
   const current = new URL(window.location.href)
-  const inferredBackendPort = import.meta.env.VITE_LTX_BACKEND_PORT?.trim() || '18000'
   const isRemoteHost = current.hostname !== '127.0.0.1' && current.hostname !== 'localhost'
+  
+  // In Lightning Studio (or any remote host), use the dev proxy (same origin)
+  if (isRemoteHost) {
+    return `${current.protocol}//${current.host}`
+  }
 
-  if (current.searchParams.has('port') || isRemoteHost) {
-    current.searchParams.set('port', inferredBackendPort)
-    return current.toString()
+  // For localhost, use the inferred backend port if specified
+  const inferredBackendPort = import.meta.env.VITE_LTX_BACKEND_PORT?.trim() || '18000'
+  if (current.searchParams.has('port')) {
+    return `${current.protocol}//${current.hostname}:${inferredBackendPort}`
   }
 
   return `http://127.0.0.1:${inferredBackendPort}`

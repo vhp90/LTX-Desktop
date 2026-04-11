@@ -64,6 +64,13 @@ export default defineConfig({
     host: rendererHost,
     port: rendererPort,
     strictPort: true,
+    proxy: isLightningStudio ? {
+      '/api': {
+        target: process.env.VITE_LTX_BACKEND_URL || `http://127.0.0.1:${process.env.VITE_LTX_BACKEND_PORT || '18000'}`,
+        changeOrigin: true,
+        rewrite: (path) => path // Keep the /api prefix
+      }
+    } : undefined
   },
   preview: {
     host: rendererHost,
