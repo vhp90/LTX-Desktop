@@ -1,9 +1,6 @@
 """Integration-style tests for model-related endpoints."""
 
-import inspect
 from pathlib import Path
-
-from huggingface_hub import file_download
 
 from runtime_config.model_download_specs import resolve_downloading_dir, resolve_model_path
 from services.model_downloader import hugging_face_downloader
@@ -347,84 +344,97 @@ class TestAtomicDownloads:
         assert not downloading.exists()
 
 
-class TestHuggingFaceInternals:
-    """Guard tests for huggingface_hub internals we rely on.
-
-    We monkey-patch ``file_download.http_get`` and ``file_download.xet_get``
-    to inject a custom tqdm bar for progress tracking during
-    ``hf_hub_download`` (which has no public ``tqdm_class`` parameter,
-    unlike ``snapshot_download``).
-
-    If these tests break after a huggingface_hub upgrade, the internal API
-    has changed.  Find an alternative approach and raise to a developer.
-    """
-
-    def test_http_get_exists_and_is_callable(self):
-        assert hasattr(file_download, "http_get"), (
-            "file_download.http_get no longer exists — progress patch for hf_hub_download is broken"
-        )
-        assert callable(file_download.http_get)
-
-    def test_http_get_accepts_tqdm_bar(self):
-        sig = inspect.signature(file_download.http_get)
-        assert "_tqdm_bar" in sig.parameters, (
-            "file_download.http_get no longer accepts _tqdm_bar — progress patch for hf_hub_download is broken"
-        )
-
-    def test_xet_get_accepts_tqdm_bar(self):
-        xet_get = getattr(file_download, "xet_get", None)
-        if xet_get is None:
-            return  # xet_get not present in this version; patch skips it gracefully
-        sig = inspect.signature(xet_get)
-        assert "_tqdm_bar" in sig.parameters, (
-            "file_download.xet_get no longer accepts _tqdm_bar — progress patch for xet downloads is broken"
-        )
-
-
 class TestHuggingFaceDownloader:
-    def test_download_file_retries_with_resume_enabled(self, monkeypatch, tmp_path):
-        calls: list[dict[str, object]] = []
+    def test_download_file_uses_hf_cli_and_retries(self, monkeypatch, tmp_path):
+        calls: list[list[str]] = []
+        progress_samples: list[int] = []
 
-        def fake_download(**kwargs: object) -> str:
-            calls.append(kwargs)
-            if len(calls) == 1:
-                raise RuntimeError("temporary network failure")
-            local_dir = Path(str(kwargs["local_dir"]))
-            filename = Path(str(kwargs["filename"])).name
-            destination = local_dir / filename
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(b"ok")
-            return str(destination)
+        class FakeProcess:
+            def __init__(self, command: list[str]) -> None:
+                self.command = command
+                self.returncode: int | None = None
+                self._poll_count = 0
 
-        monkeypatch.setattr(hugging_face_downloader, "hf_hub_download", fake_download)
+            def poll(self) -> int | None:
+                self._poll_count += 1
+                target = tmp_path / "weights" / "model.safetensors"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if self._poll_count == 1:
+                    target.write_bytes(b"\x00" * 128)
+                    return None
+                if len(calls) == 1:
+                    self.returncode = 1
+                else:
+                    target.write_bytes(b"\x00" * 512)
+                    self.returncode = 0
+                return self.returncode
+
+            def communicate(self) -> tuple[str, None]:
+                output = "temporary failure" if self.returncode else str(tmp_path / "weights" / "model.safetensors")
+                return output, None
+
+        def fake_popen(command: list[str], **kwargs: object) -> FakeProcess:
+            del kwargs
+            calls.append(command)
+            return FakeProcess(command)
+
+        monkeypatch.setattr(hugging_face_downloader.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(hugging_face_downloader, "_find_hf_cli", lambda: "hf")
         monkeypatch.setenv("LTX_HF_DOWNLOAD_RETRIES", "2")
+        monkeypatch.setattr(hugging_face_downloader.time, "sleep", lambda _: None)
 
         downloader = hugging_face_downloader.HuggingFaceDownloader()
-        result = downloader.download_file("demo/repo", "weights/model.safetensors", str(tmp_path))
+        result = downloader.download_file(
+            "demo/repo",
+            "weights/model.safetensors",
+            str(tmp_path),
+            on_progress=progress_samples.append,
+        )
 
         assert result.exists()
         assert len(calls) == 2
-        assert calls[0]["resume_download"] is True
-        assert calls[0]["local_dir_use_symlinks"] is False
+        assert calls[0][:3] == ["hf", "download", "demo/repo"]
+        assert "weights/model.safetensors" in calls[0]
+        assert "--quiet" in calls[0]
+        assert "--local-dir" in calls[0]
+        assert progress_samples[-1] == 512
 
-    def test_download_snapshot_uses_resume_and_limited_workers(self, monkeypatch, tmp_path):
-        calls: list[dict[str, object]] = []
+    def test_download_snapshot_uses_hf_cli_with_worker_limit(self, monkeypatch, tmp_path):
+        calls: list[list[str]] = []
 
-        def fake_snapshot_download(**kwargs: object) -> str:
-            calls.append(kwargs)
-            local_dir = Path(str(kwargs["local_dir"]))
-            local_dir.mkdir(parents=True, exist_ok=True)
-            (local_dir / "model.bin").write_bytes(b"ok")
-            return str(local_dir)
+        class FakeProcess:
+            def __init__(self, command: list[str]) -> None:
+                self.command = command
+                self.returncode: int | None = None
+                self._poll_count = 0
 
-        monkeypatch.setattr(hugging_face_downloader, "snapshot_download", fake_snapshot_download)
+            def poll(self) -> int | None:
+                self._poll_count += 1
+                target = tmp_path / "model.bin"
+                if self._poll_count == 1:
+                    target.write_bytes(b"\x00" * 64)
+                    return None
+                self.returncode = 0
+                return self.returncode
+
+            def communicate(self) -> tuple[str, None]:
+                return str(tmp_path), None
+
+        def fake_popen(command: list[str], **kwargs: object) -> FakeProcess:
+            del kwargs
+            calls.append(command)
+            return FakeProcess(command)
+
+        monkeypatch.setattr(hugging_face_downloader.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(hugging_face_downloader, "_find_hf_cli", lambda: "hf")
         monkeypatch.setenv("LTX_HF_SNAPSHOT_MAX_WORKERS", "3")
+        monkeypatch.setattr(hugging_face_downloader.time, "sleep", lambda _: None)
 
         downloader = hugging_face_downloader.HuggingFaceDownloader()
         result = downloader.download_snapshot("demo/repo", str(tmp_path))
 
         assert result.exists()
         assert len(calls) == 1
-        assert calls[0]["resume_download"] is True
-        assert calls[0]["local_dir_use_symlinks"] is False
-        assert calls[0]["max_workers"] == 3
+        assert calls[0][:3] == ["hf", "download", "demo/repo"]
+        assert "--max-workers" in calls[0]
+        assert calls[0][calls[0].index("--max-workers") + 1] == "3"

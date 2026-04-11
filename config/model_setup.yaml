@@ -8,9 +8,8 @@ version: 1
 # - temporal latent upscaler
 #
 # Notes:
-# - `checkpoint` stays on the desktop-tested distilled checkpoint rather than the
-#   Comfy `22b-dev-fp8` transformer, because the current desktop pipelines are
-#   wired around the distilled local path.
+# - `checkpoint` now defaults to the fp8 transformer checkpoint so setup-models
+#   pulls the current lightweight desktop target from the dedicated fp8 repo.
 # - `upsampler` is updated to the x2 1.1 model from your prior config because it
 #   is the same desktop-used asset class.
 # - `text_encoder` stays on the Gemma snapshot format the desktop expects;
@@ -25,11 +24,11 @@ required_model_types:
 
 models:
   checkpoint:
-    relative_path: ltx-2.3-22b-distilled.safetensors
-    expected_size_bytes: 43000000000
+    relative_path: ltx-2.3-22b-dev-fp8.safetensors
+    expected_size_bytes: 23000000000
     is_folder: false
-    repo_id: Lightricks/LTX-2.3
-    description: Main transformer model
+    repo_id: Lightricks/LTX-2.3-fp8
+    description: Main fp8 transformer model
 
   upsampler:
     relative_path: ltx-2.3-spatial-upscaler-x2-1.1.safetensors

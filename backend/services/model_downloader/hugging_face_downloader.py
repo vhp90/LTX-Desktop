@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
+import shutil
+import subprocess
+import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
-from threading import Lock
-from typing import Any, TypeVar
-from unittest.mock import patch
+
+logger = logging.getLogger(__name__)
 
 
 def _apply_hf_env_defaults() -> None:
@@ -30,15 +31,6 @@ def _apply_hf_env_defaults() -> None:
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
 
-_apply_hf_env_defaults()
-
-from huggingface_hub import file_download, hf_hub_download, snapshot_download  # type: ignore[reportUnknownVariableType]
-from tqdm.auto import tqdm as tqdm_auto  # type: ignore[reportUnknownVariableType]
-
-logger = logging.getLogger(__name__)
-T = TypeVar("T")
-
-
 def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
     raw_value = os.environ.get(name, "").strip()
     if not raw_value:
@@ -50,102 +42,111 @@ def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
         return default
 
 
-def _configure_hf_backend() -> None:
+def _find_hf_cli() -> str:
+    executable_dir = Path(sys.executable).resolve().parent
+    candidates = [
+        executable_dir / "hf",
+        executable_dir / "hf.exe",
+        executable_dir / "huggingface-cli",
+        executable_dir / "huggingface-cli.exe",
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+
+    for name in ("hf", "huggingface-cli"):
+        resolved = shutil.which(name)
+        if resolved:
+            return resolved
+
+    raise RuntimeError("Could not find the Hugging Face CLI (`hf`).")
+
+
+def _path_size(path: Path) -> int:
+    if path.is_file():
+        return path.stat().st_size
+    if path.is_dir():
+        total = 0
+        for child in path.rglob("*"):
+            if child.is_file():
+                total += child.stat().st_size
+        return total
+    return 0
+
+
+def _hf_command_env() -> dict[str, str]:
     _apply_hf_env_defaults()
+    env = os.environ.copy()
+    env["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+    return env
 
 
-def _run_with_retries(label: str, operation: Callable[[], T]) -> T:
-    max_attempts = _env_int("LTX_HF_DOWNLOAD_RETRIES", 4)
+def _run_hf_download(
+    *,
+    command_args: list[str],
+    progress_path: Path,
+    on_progress: Callable[[int], None] | None,
+    label: str,
+) -> str:
+    max_attempts = _env_int("LTX_HF_DOWNLOAD_RETRIES", 6)
     backoff_seconds = _env_int("LTX_HF_DOWNLOAD_RETRY_BACKOFF_SECONDS", 3)
+    poll_interval = float(_env_int("LTX_HF_PROGRESS_POLL_SECONDS", 1))
+    hf_cli = _find_hf_cli()
 
     last_error: Exception | None = None
     for attempt in range(1, max_attempts + 1):
-        try:
-            return operation()
-        except Exception as exc:
-            last_error = exc
-            if attempt >= max_attempts:
-                break
-            delay = backoff_seconds * attempt
-            logger.warning(
-                "Retrying %s after download failure (%s/%s): %s",
-                label,
-                attempt,
-                max_attempts,
-                exc,
-            )
-            time.sleep(delay)
+        command = [hf_cli, "download", *command_args]
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_hf_command_env(),
+        )
+
+        last_reported = -1
+        while process.poll() is None:
+            if on_progress is not None:
+                current_size = _path_size(progress_path)
+                if current_size != last_reported:
+                    on_progress(current_size)
+                    last_reported = current_size
+            time.sleep(poll_interval)
+
+        output, _ = process.communicate()
+
+        if on_progress is not None:
+            final_size = _path_size(progress_path)
+            if final_size != last_reported:
+                on_progress(final_size)
+
+        if process.returncode == 0:
+            return output.strip()
+
+        last_error = RuntimeError(output.strip() or f"`hf download` failed for {label} with exit code {process.returncode}")
+        if attempt >= max_attempts:
+            break
+
+        delay = backoff_seconds * attempt
+        logger.warning(
+            "Retrying %s after hf CLI download failure (%s/%s): %s",
+            label,
+            attempt,
+            max_attempts,
+            last_error,
+        )
+        time.sleep(delay)
 
     assert last_error is not None
     raise last_error
 
 
-def _make_progress_tqdm_class(callback: Callable[[int], None]) -> type:
-    """Return a tqdm subclass that reports aggregated progress via *callback*.
-
-    Used for both single-file and snapshot downloads.  Snapshot downloads
-    spawn one tqdm instance per file; all instances share mutable state so
-    the callback reports total progress across every file in the download.
-    """
-    lock = Lock()
-    shared: dict[str, int] = {"downloaded": 0}
-
-    class _ProgressTqdm(tqdm_auto):  # type: ignore[reportUntypedBaseClass]
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            kwargs["disable"] = True
-            super().__init__(*args, **kwargs)  # type: ignore[reportUnknownMemberType]
-
-        def update(self, n: float | int | None = 1) -> bool | None:  # type: ignore[reportIncompatibleMethodOverride]
-            result = super().update(n)
-            if n is not None:
-                with lock:
-                    shared["downloaded"] += int(n)
-                callback(shared["downloaded"])
-            return result
-
-    return _ProgressTqdm
-
-
-@contextlib.contextmanager
-def _patch_download_progress(callback: Callable[[int], None]) -> Iterator[None]:
-    """Temporarily monkey-patch ``huggingface_hub.file_download.http_get``
-    and ``xet_get`` to inject a custom tqdm bar that forwards progress to
-    *callback*.
-
-    ``hf_hub_download`` does not expose a ``tqdm_class`` parameter (unlike
-    ``snapshot_download``), but its internal ``http_get`` and ``xet_get``
-    both accept a private ``_tqdm_bar`` kwarg.  We wrap them to inject our
-    own bar when the caller hasn't already provided one.
-
-    See ``test_http_get_accepts_tqdm_bar`` — if that test breaks after a
-    huggingface_hub upgrade, this patch needs to be revisited.
-    """
-    tqdm_cls = _make_progress_tqdm_class(callback)
-    original_http_get: Callable[..., Any] = file_download.http_get  # type: ignore[reportUnknownMemberType]
-
-    def _wrapped_http_get(*args: Any, **kwargs: Any) -> None:
-        if kwargs.get("_tqdm_bar") is None:
-            kwargs["_tqdm_bar"] = tqdm_cls(disable=True)
-        return original_http_get(*args, **kwargs)
-
-    xet_get_fn: Callable[..., Any] | None = getattr(file_download, "xet_get", None)
-
-    def _wrapped_xet_get(*args: Any, **kwargs: Any) -> None:
-        if kwargs.get("_tqdm_bar") is None:
-            kwargs["_tqdm_bar"] = tqdm_cls(disable=True)
-        assert xet_get_fn is not None
-        return xet_get_fn(*args, **kwargs)
-
-    with patch.object(file_download, "http_get", _wrapped_http_get):
-        if xet_get_fn is not None:
-            with patch.object(file_download, "xet_get", _wrapped_xet_get):
-                yield
-        else:
-            yield
-
-
 class HuggingFaceDownloader:
-    """Wraps huggingface_hub download functions."""
+    """Wraps the supported `hf download` CLI for model downloads."""
 
     def download_file(
         self,
@@ -154,21 +155,25 @@ class HuggingFaceDownloader:
         local_dir: str,
         on_progress: Callable[[int], None] | None = None,
     ) -> Path:
-        _configure_hf_backend()
-        ctx = _patch_download_progress(on_progress) if on_progress is not None else contextlib.nullcontext()
-        with ctx:
-            path = _run_with_retries(
-                f"{repo_id}/{filename}",
-                lambda: hf_hub_download(
-                    repo_id=repo_id,
-                    filename=filename,
-                    local_dir=local_dir,
-                    etag_timeout=float(_env_int("LTX_HF_ETAG_TIMEOUT_SECONDS", 30)),
-                    local_dir_use_symlinks=False,
-                    resume_download=True,
-                ),
-            )
-        return Path(path)
+        local_dir_path = Path(local_dir)
+        target_path = local_dir_path / Path(filename)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        _run_hf_download(
+            command_args=[
+                repo_id,
+                filename,
+                "--local-dir",
+                str(local_dir_path),
+                "--quiet",
+                "--max-workers",
+                str(_env_int("LTX_HF_MAX_WORKERS", 1)),
+            ],
+            progress_path=target_path,
+            on_progress=on_progress,
+            label=f"{repo_id}/{filename}",
+        )
+        return target_path
 
     def download_snapshot(
         self,
@@ -176,18 +181,20 @@ class HuggingFaceDownloader:
         local_dir: str,
         on_progress: Callable[[int], None] | None = None,
     ) -> Path:
-        _configure_hf_backend()
-        ctx = _patch_download_progress(on_progress) if on_progress is not None else contextlib.nullcontext()
-        with ctx:
-            path = _run_with_retries(
+        local_dir_path = Path(local_dir)
+        local_dir_path.mkdir(parents=True, exist_ok=True)
+
+        _run_hf_download(
+            command_args=[
                 repo_id,
-                lambda: snapshot_download(
-                    repo_id=repo_id,
-                    local_dir=local_dir,
-                    etag_timeout=float(_env_int("LTX_HF_ETAG_TIMEOUT_SECONDS", 30)),
-                    local_dir_use_symlinks=False,
-                    max_workers=_env_int("LTX_HF_SNAPSHOT_MAX_WORKERS", 2),
-                    resume_download=True,
-                ),
-            )
-        return Path(path)
+                "--local-dir",
+                str(local_dir_path),
+                "--quiet",
+                "--max-workers",
+                str(_env_int("LTX_HF_SNAPSHOT_MAX_WORKERS", 2)),
+            ],
+            progress_path=local_dir_path,
+            on_progress=on_progress,
+            label=repo_id,
+        )
+        return local_dir_path

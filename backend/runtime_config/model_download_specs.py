@@ -38,11 +38,11 @@ MODEL_FILE_ORDER: tuple[ModelFileType, ...] = (
 
 DEFAULT_MODEL_DOWNLOAD_SPECS: dict[ModelFileType, ModelFileDownloadSpec] = {
     "checkpoint": ModelFileDownloadSpec(
-        relative_path=Path("ltx-2.3-22b-distilled.safetensors"),
-        expected_size_bytes=43_000_000_000,
+        relative_path=Path("ltx-2.3-22b-dev-fp8.safetensors"),
+        expected_size_bytes=23_000_000_000,
         is_folder=False,
-        repo_id="Lightricks/LTX-2.3",
-        description="Main transformer model",
+        repo_id="Lightricks/LTX-2.3-fp8",
+        description="Main fp8 transformer model",
     ),
     "upsampler": ModelFileDownloadSpec(
         relative_path=Path("ltx-2.3-spatial-upscaler-x2-1.0.safetensors"),
