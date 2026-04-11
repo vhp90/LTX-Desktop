@@ -12,6 +12,26 @@ from threading import Lock
 from typing import Any, TypeVar
 from unittest.mock import patch
 
+
+def _apply_hf_env_defaults() -> None:
+    raw_use_xet = os.environ.get("LTX_HF_USE_XET", "").strip().lower()
+    if raw_use_xet in {"1", "true", "yes", "on"}:
+        os.environ.setdefault("HF_HUB_DISABLE_XET", "0")
+        os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
+    elif raw_use_xet in {"0", "false", "no", "off"}:
+        os.environ["HF_HUB_DISABLE_XET"] = "1"
+        os.environ.pop("HF_XET_HIGH_PERFORMANCE", None)
+    else:
+        # Large desktop model downloads are more reliable over plain HTTP than Xet.
+        os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+        if os.environ.get("HF_HUB_DISABLE_XET") == "1":
+            os.environ.pop("HF_XET_HIGH_PERFORMANCE", None)
+
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+
+
+_apply_hf_env_defaults()
+
 from huggingface_hub import file_download, hf_hub_download, snapshot_download  # type: ignore[reportUnknownVariableType]
 from tqdm.auto import tqdm as tqdm_auto  # type: ignore[reportUnknownVariableType]
 
@@ -31,18 +51,7 @@ def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
 
 
 def _configure_hf_backend() -> None:
-    raw_use_xet = os.environ.get("LTX_HF_USE_XET", "").strip().lower()
-    if raw_use_xet in {"1", "true", "yes", "on"}:
-        os.environ.setdefault("HF_HUB_DISABLE_XET", "0")
-        os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
-        return
-
-    if raw_use_xet in {"0", "false", "no", "off"}:
-        os.environ["HF_HUB_DISABLE_XET"] = "1"
-        return
-
-    # Large desktop model downloads are more reliable over plain HTTP than Xet.
-    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    _apply_hf_env_defaults()
 
 
 def _run_with_retries(label: str, operation: Callable[[], T]) -> T:

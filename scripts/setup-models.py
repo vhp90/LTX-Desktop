@@ -21,6 +21,26 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = ROOT / "backend"
+
+
+def _apply_hf_env_defaults() -> None:
+    raw_use_xet = os.environ.get("LTX_HF_USE_XET", "").strip().lower()
+    if raw_use_xet in {"1", "true", "yes", "on"}:
+        os.environ.setdefault("HF_HUB_DISABLE_XET", "0")
+        os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
+    elif raw_use_xet in {"0", "false", "no", "off"}:
+        os.environ["HF_HUB_DISABLE_XET"] = "1"
+        os.environ.pop("HF_XET_HIGH_PERFORMANCE", None)
+    else:
+        os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+        if os.environ.get("HF_HUB_DISABLE_XET") == "1":
+            os.environ.pop("HF_XET_HIGH_PERFORMANCE", None)
+
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+
+
+_apply_hf_env_defaults()
+
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
@@ -80,17 +100,7 @@ def _download_external_loras(config_path: Path, target_dir: Path) -> list[str]:
 
 
 def _configure_hf_download_env() -> None:
-    raw_use_xet = os.environ.get("LTX_HF_USE_XET", "").strip().lower()
-    if raw_use_xet in {"1", "true", "yes", "on"}:
-        os.environ.setdefault("HF_HUB_DISABLE_XET", "0")
-        os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
-        return
-
-    if raw_use_xet in {"0", "false", "no", "off"}:
-        os.environ["HF_HUB_DISABLE_XET"] = "1"
-        return
-
-    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    _apply_hf_env_defaults()
 
 
 def _format_bytes(num_bytes: int) -> str:
@@ -327,6 +337,7 @@ def main() -> int:
     print(f"Target models dir: {models_dir}")
     print(f"Selected model types: {', '.join(selected_types)}")
     _configure_hf_download_env()
+    print(f"HF transport: {'xet' if os.environ.get('HF_HUB_DISABLE_XET') == '0' else 'http'}")
 
     for model_type in selected_types:
         spec = specs[model_type]
