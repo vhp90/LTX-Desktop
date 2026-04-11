@@ -31,7 +31,7 @@ ok "pnpm install complete"
 echo ""
 echo "Setting up Python backend venv..."
 cd "$PROJECT_DIR/backend"
-uv sync --extra dev
+env -u UV_MANAGED_PYTHON UV_NO_MANAGED_PYTHON=1 UV_PYTHON="${UV_PYTHON:-$(which python3.13)}" uv sync --extra dev
 ok "uv sync complete"
 
 # Verify torch + accelerator
