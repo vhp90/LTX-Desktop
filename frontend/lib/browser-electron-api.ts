@@ -5,13 +5,15 @@ function getBrowserBackendUrl(): string {
   if (url) return url
 
   const current = new URL(window.location.href)
-  const currentPort = current.searchParams.get('port')
-  if (currentPort) {
-    current.searchParams.set('port', import.meta.env.VITE_LTX_BACKEND_PORT?.trim() || '18000')
+  const inferredBackendPort = import.meta.env.VITE_LTX_BACKEND_PORT?.trim() || '18000'
+  const isRemoteHost = current.hostname !== '127.0.0.1' && current.hostname !== 'localhost'
+
+  if (current.searchParams.has('port') || isRemoteHost) {
+    current.searchParams.set('port', inferredBackendPort)
     return current.toString()
   }
 
-  return 'http://127.0.0.1:18000'
+  return `http://127.0.0.1:${inferredBackendPort}`
 }
 
 function getBrowserBackendToken(): string {

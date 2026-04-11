@@ -115,6 +115,10 @@ PORT = 0
 PROJECT_ROOT = Path(__file__).parent.parent
 
 
+def _is_lightning_runtime() -> bool:
+    return bool(os.environ.get("LIGHTNING_CLOUDSPACE_HOST")) or os.environ.get("LIGHTNING_INTERACTIVE") == "true"
+
+
 def _parse_allowed_origins() -> list[str]:
     raw_value = os.environ.get("LTX_ALLOWED_ORIGINS", "")
     configured = [origin.strip() for origin in raw_value.split(",") if origin.strip()]
@@ -123,11 +127,15 @@ def _parse_allowed_origins() -> list[str]:
 
 def _get_allowed_origin_regex() -> str | None:
     raw_value = os.environ.get("LTX_ALLOWED_ORIGIN_REGEX", "").strip()
-    return raw_value or None
+    if raw_value:
+        return raw_value
+    if _is_lightning_runtime():
+        return r"^https://(lightning\.ai|.*\.cloudspaces\.litng\.ai)$"
+    return None
 
 
 def _get_backend_bind_host() -> str:
-    return os.environ.get("LTX_BACKEND_BIND_HOST", "127.0.0.1")
+    return os.environ.get("LTX_BACKEND_BIND_HOST", "0.0.0.0" if _is_lightning_runtime() else "127.0.0.1")
 
 
 def _get_backend_public_host() -> str:
