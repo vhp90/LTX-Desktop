@@ -4,6 +4,7 @@ import type { ElectronAPI } from '../shared/electron-api-schema'
 
 interface ImportMetaEnv {
   readonly VITE_LTX_BACKEND_URL?: string
+  readonly VITE_LTX_BACKEND_PORT?: string
   readonly VITE_LTX_BACKEND_TOKEN?: string
 }
 
