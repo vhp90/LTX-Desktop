@@ -258,7 +258,6 @@ class DownloadHandler(StateHandlerBase):
 
                 self._move_to_final(file_type)
             except Exception:
-                self.cleanup_downloading_dir()
                 raise
 
         self.finish_download()
@@ -300,7 +299,6 @@ class DownloadHandler(StateHandlerBase):
                 )
                 self._move_to_final("text_encoder")
             except Exception:
-                self.cleanup_downloading_dir()
                 raise
             self.finish_download()
             self._models_handler.refresh_available_files()

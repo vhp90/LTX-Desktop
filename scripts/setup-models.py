@@ -9,11 +9,11 @@ desktop setup flow.
 from __future__ import annotations
 
 import argparse
-import importlib
 import os
 import shutil
-import subprocess
 import sys
+import time
+from collections.abc import Callable
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlparse, unquote, parse_qsl, urlencode, urlunparse
@@ -79,14 +79,49 @@ def _download_external_loras(config_path: Path, target_dir: Path) -> list[str]:
     return _download_url_items(raw_items, target_dir, label="external LoRA")
 
 
-def _ensure_hf_fast_download_available() -> None:
-    os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
-    os.environ.setdefault("HF_HUB_DISABLE_XET", "0")
-    try:
-        importlib.import_module("hf_xet")
-    except ImportError:
-        print("Installing hf_xet for fast Hugging Face downloads...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "hf_xet"], check=True)
+def _configure_hf_download_env() -> None:
+    raw_use_xet = os.environ.get("LTX_HF_USE_XET", "").strip().lower()
+    if raw_use_xet in {"1", "true", "yes", "on"}:
+        os.environ.setdefault("HF_HUB_DISABLE_XET", "0")
+        os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
+        return
+
+    if raw_use_xet in {"0", "false", "no", "off"}:
+        os.environ["HF_HUB_DISABLE_XET"] = "1"
+        return
+
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
+
+def _format_bytes(num_bytes: int) -> str:
+    value = float(num_bytes)
+    units = ("B", "KB", "MB", "GB", "TB")
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            return f"{value:.1f} {unit}"
+        value /= 1024.0
+    return f"{num_bytes} B"
+
+
+def _make_cli_progress_callback(label: str) -> Callable[[int], None]:
+    started_at = time.monotonic()
+    last_report_at = started_at
+    last_reported_bytes = -1
+
+    def on_progress(downloaded: int) -> None:
+        nonlocal last_report_at, last_reported_bytes
+        now = time.monotonic()
+        if downloaded == last_reported_bytes:
+            return
+        if last_reported_bytes >= 0 and now - last_report_at < 5.0:
+            return
+        elapsed = max(now - started_at, 0.001)
+        speed = downloaded / elapsed
+        print(f"progress {label}: {_format_bytes(downloaded)} downloaded at {_format_bytes(int(speed))}/s")
+        last_report_at = now
+        last_reported_bytes = downloaded
+
+    return on_progress
 
 
 def _detect_source(url: str) -> str:
@@ -109,12 +144,14 @@ def _parse_hf_url(url: str) -> tuple[str, str, str]:
 
 
 def _download_hf_url(url: str, target_dir: Path, downloader: HuggingFaceDownloader) -> Path:
-    _ensure_hf_fast_download_available()
+    _configure_hf_download_env()
     repo_id, filepath, filename = _parse_hf_url(url)
+    progress_cb = _make_cli_progress_callback(filename)
     downloaded = downloader.download_file(
         repo_id=repo_id,
         filename=filepath,
         local_dir=str(target_dir),
+        on_progress=progress_cb,
     )
     destination = target_dir / filename
     if downloaded.resolve() != destination.resolve():
@@ -132,7 +169,7 @@ def _download_hf_url(url: str, target_dir: Path, downloader: HuggingFaceDownload
     return destination
 
 
-def _download_http_url(url: str, target_dir: Path) -> Path:
+def _download_http_url(url: str, target_dir: Path, *, on_progress: Callable[[int], None] | None = None) -> Path:
     civitai_token = _get_civitai_token()
     parsed = urlparse(url)
     query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
@@ -144,8 +181,16 @@ def _download_http_url(url: str, target_dir: Path) -> Path:
     filename = unquote(Path(parsed.path).name) or "downloaded_asset"
     destination = target_dir / filename
     request = Request(url, headers={"User-Agent": "LTX-Desktop-Setup/1.0"})
-    with urlopen(request) as response, destination.open("wb") as output:  # noqa: S310
-        output.write(response.read())
+    downloaded = 0
+    with urlopen(request, timeout=60) as response, destination.open("wb") as output:  # noqa: S310
+        while True:
+            chunk = response.read(8 * 1024 * 1024)
+            if not chunk:
+                break
+            output.write(chunk)
+            downloaded += len(chunk)
+            if on_progress is not None:
+                on_progress(downloaded)
     return destination
 
 
@@ -169,12 +214,14 @@ def _download_url_items(raw_items: list[object], target_dir: Path, *, label: str
             continue
 
         print(f"download {label}: {destination.name}")
+        progress_cb = _make_cli_progress_callback(destination.name)
         source = _detect_source(url)
         try:
             if source == "huggingface":
                 _download_hf_url(url, target_dir, downloader)
             else:
-                _download_http_url(url, target_dir)
+                _download_http_url(url, target_dir, on_progress=progress_cb)
+            print(f"done {label}: {destination.name}")
         except HTTPError as exc:
             failure = f"{label} {url} failed with HTTP {exc.code}"
             if exc.code == 401 and source == "civitai":
@@ -279,6 +326,7 @@ def main() -> int:
     print(f"Using config: {args.config}")
     print(f"Target models dir: {models_dir}")
     print(f"Selected model types: {', '.join(selected_types)}")
+    _configure_hf_download_env()
 
     for model_type in selected_types:
         spec = specs[model_type]
@@ -289,15 +337,16 @@ def main() -> int:
 
         print(f"download {model_type}: {spec.repo_id} -> {spec.relative_path}")
         resolve_downloading_dir(models_dir).mkdir(parents=True, exist_ok=True)
+        progress_cb = _make_cli_progress_callback(model_type)
         if spec.is_folder:
             local_dir = resolve_downloading_path(models_dir, specs, model_type)
             downloader.download_snapshot(
                 repo_id=spec.repo_id,
                 local_dir=str(local_dir),
+                on_progress=progress_cb,
             )
             if final_path.exists():
                 if final_path.is_dir():
-                    import shutil
                     shutil.rmtree(final_path)
                 else:
                     final_path.unlink()
@@ -308,11 +357,13 @@ def main() -> int:
                 repo_id=spec.repo_id,
                 filename=spec.name,
                 local_dir=str(local_dir),
+                on_progress=progress_cb,
             )
             final_path.parent.mkdir(parents=True, exist_ok=True)
             if final_path.exists():
                 final_path.unlink()
             downloaded.rename(final_path)
+        print(f"done {model_type}: {final_path}")
 
     failures: list[str] = []
     if args.include_external_loras:

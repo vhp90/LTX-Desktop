@@ -215,7 +215,6 @@ class AppHandler:
             config=config,
         )
 
-        self.downloads.cleanup_downloading_dir()
         self.models.refresh_available_files()
 
 

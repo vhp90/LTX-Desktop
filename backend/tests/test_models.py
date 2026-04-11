@@ -6,6 +6,7 @@ from pathlib import Path
 from huggingface_hub import file_download
 
 from runtime_config.model_download_specs import resolve_downloading_dir, resolve_model_path
+from services.model_downloader import hugging_face_downloader
 from state.app_state_types import (
     DownloadSessionComplete,
     DownloadSessionError,
@@ -378,3 +379,52 @@ class TestHuggingFaceInternals:
         assert "_tqdm_bar" in sig.parameters, (
             "file_download.xet_get no longer accepts _tqdm_bar — progress patch for xet downloads is broken"
         )
+
+
+class TestHuggingFaceDownloader:
+    def test_download_file_retries_with_resume_enabled(self, monkeypatch, tmp_path):
+        calls: list[dict[str, object]] = []
+
+        def fake_download(**kwargs: object) -> str:
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise RuntimeError("temporary network failure")
+            local_dir = Path(str(kwargs["local_dir"]))
+            filename = Path(str(kwargs["filename"])).name
+            destination = local_dir / filename
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"ok")
+            return str(destination)
+
+        monkeypatch.setattr(hugging_face_downloader, "hf_hub_download", fake_download)
+        monkeypatch.setenv("LTX_HF_DOWNLOAD_RETRIES", "2")
+
+        downloader = hugging_face_downloader.HuggingFaceDownloader()
+        result = downloader.download_file("demo/repo", "weights/model.safetensors", str(tmp_path))
+
+        assert result.exists()
+        assert len(calls) == 2
+        assert calls[0]["resume_download"] is True
+        assert calls[0]["local_dir_use_symlinks"] is False
+
+    def test_download_snapshot_uses_resume_and_limited_workers(self, monkeypatch, tmp_path):
+        calls: list[dict[str, object]] = []
+
+        def fake_snapshot_download(**kwargs: object) -> str:
+            calls.append(kwargs)
+            local_dir = Path(str(kwargs["local_dir"]))
+            local_dir.mkdir(parents=True, exist_ok=True)
+            (local_dir / "model.bin").write_bytes(b"ok")
+            return str(local_dir)
+
+        monkeypatch.setattr(hugging_face_downloader, "snapshot_download", fake_snapshot_download)
+        monkeypatch.setenv("LTX_HF_SNAPSHOT_MAX_WORKERS", "3")
+
+        downloader = hugging_face_downloader.HuggingFaceDownloader()
+        result = downloader.download_snapshot("demo/repo", str(tmp_path))
+
+        assert result.exists()
+        assert len(calls) == 1
+        assert calls[0]["resume_download"] is True
+        assert calls[0]["local_dir_use_symlinks"] is False
+        assert calls[0]["max_workers"] == 3
