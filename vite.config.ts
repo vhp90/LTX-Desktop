@@ -85,12 +85,14 @@ export default defineConfig({
     host: rendererHost,
     port: rendererPort,
     strictPort: true,
+    allowedHosts: true,
     proxy: browserProxy,
   },
   preview: {
     host: rendererHost,
     port: rendererPort,
     strictPort: true,
+    allowedHosts: true,
   },
   base: './',  // Use relative paths for Electron file:// protocol
   build: {
